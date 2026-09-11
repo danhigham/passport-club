@@ -17,7 +17,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // One file from each of the three fetches, so a half-finished build is caught.
 const REQUIRED = [
-  'public/data/countries.json',
+  'public/data/countries.topo.json',
   'public/data/cities.json',
   'public/data/admin1/index.json',
 ];

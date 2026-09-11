@@ -15,6 +15,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geoArea, geoContains } from 'd3-geo';
+import topojsonClient from 'topojson-client';
+
+const { feature: topoFeature } = topojsonClient;
+
+/** Decode a packed layer the same way the game does. */
+function decode(topo, layer) {
+  return topoFeature(topo, topo.objects[layer]).features;
+}
 
 /**
  * A polygon wound the wrong way is still valid GeoJSON — it just means the
@@ -47,7 +55,7 @@ const report = (label, bad, total, sample) => {
 
 /* ---- countries -------------------------------------------------------- */
 
-const countries = read('countries.json').features;
+const countries = decode(read('countries.topo.json'), 'countries');
 {
   const bad = [];
   for (const f of countries) {
@@ -123,15 +131,15 @@ const index = read('admin1/index.json');
   let total = 0;
   const sample = [];
   for (const entry of index) {
-    const fc = read(`admin1/${entry.country}.json`);
-    for (const f of fc.features) {
+    const features = decode(read(`admin1/${entry.country}.topo.json`), 'admin1');
+    for (const f of features) {
       total++;
       if (!geoContains(f, f.properties.point)) {
         bad++;
         if (sample.length < 6) sample.push(`${f.properties.name} (${entry.country})`);
       }
     }
-    if (fc.features.length !== entry.count) {
+    if (features.length !== entry.count) {
       console.log(`      ! index count mismatch for ${entry.country}`);
       failures++;
     }
@@ -143,8 +151,8 @@ const index = read('admin1/index.json');
   let total = 0;
   const sample = [];
   for (const entry of index) {
-    const fc = read(`admin1/${entry.country}.json`);
-    for (const f of fc.features) {
+    const features = decode(read(`admin1/${entry.country}.topo.json`), 'admin1');
+    for (const f of features) {
       total++;
       if (geoArea(f) > INVERTED_AREA) {
         bad++;
@@ -161,10 +169,10 @@ const index = read('admin1/index.json');
   let total = 0;
   const sample = [];
   for (const entry of index) {
-    const fc = read(`admin1/${entry.country}.json`);
-    for (const f of fc.features) {
+    const features = decode(read(`admin1/${entry.country}.topo.json`), 'admin1');
+    for (const f of features) {
       total++;
-      const other = shadowedBy(fc.features, f);
+      const other = shadowedBy(features, f);
       if (other) {
         bad++;
         if (sample.length < 6) {
@@ -185,8 +193,8 @@ const index = read('admin1/index.json');
   // game that cannot start.
   const empty = [];
   for (const entry of index) {
-    const fc = read(`admin1/${entry.country}.json`);
-    if (!fc.features.some((f) => f.properties.tier === 1)) empty.push(entry.countryName);
+    const features = decode(read(`admin1/${entry.country}.topo.json`), 'admin1');
+    if (!features.some((f) => f.properties.tier === 1)) empty.push(entry.countryName);
   }
   report('every admin1 country has tier-1 items', empty.length, index.length, empty);
 }

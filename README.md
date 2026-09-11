@@ -84,23 +84,42 @@ API keys, no runtime dependency on anyone else's infrastructure.
 
 | File | Size | Contents |
 | --- | --- | --- |
-| `countries.json` | 194 kb | 177 country polygons + continent/population |
+| `countries.topo.json` | 761 kb | 242 country polygons (204 askable) at 50m |
 | `continents.json` | 1 kb | Continent registry and opening viewpoints |
 | `cities.json` | 249 kb | 1,248 populated places |
-| `admin1/<ISO3>.json` | 20 mb total | 4,127 divisions across 171 countries |
+| `admin1/<ISO3>.topo.json` | 7.9 mb total | 4,542 divisions across 211 countries |
 
 The admin-1 set is far too big to ship as one file, so it's split per country and
-fetched only when a player picks that country. Median file is 64 kb.
+fetched only when a player picks that country.
+
+**Polygons ship as TopoJSON**, which pays for itself twice over. Shared borders
+are stored once rather than twice and coordinates are quantised integers, so the
+whole world at 50m costs ~260 kb gzipped — *less than the 110m GeoJSON it
+replaced*, at roughly eighteen times the detail. And because a border is a
+single shared arc, neighbours cannot drift apart into slivers of visible ocean
+the way independently-simplified polygons do.
+
+Resolution matters more than it sounds. At 110m the entire United Kingdom is
+**56 points** — fine for a world view, obviously broken the moment you zoom, and
+absurd beneath the 10m county boundaries drawn on top of it. At 50m it's 986.
 
 The build does more than repackage:
 
-- **Coordinates are thinned adaptively** — 2 decimal places for large shapes, up
-  to 4 for small islands that would otherwise collapse to nothing.
-- **Ring winding is normalised.** This one matters enormously: `geoContains` is
-  *spherical*, so a ring wound the wrong way isn't malformed — it's a valid
-  polygon covering everything *except* the shape you meant. Natural Earth ships a
-  few (Alaska, thanks to the Aleutians crossing the antimeridian), and the symptom
-  is one state silently swallowing every click on the map.
+- **Quantisation replaces decimal rounding.** Coordinates used to be snapped to
+  a decimal grid to save space; TopoJSON quantisation does that job on a finer
+  grid and without discarding the detail the 50m upgrade exists to deliver.
+- **Ring winding is normalised**, after packing. This one matters enormously:
+  `geoContains` is *spherical*, so a ring wound the wrong way isn't malformed —
+  it's a valid polygon covering everything *except* the shape you meant. Natural
+  Earth ships a few (Alaska, thanks to the Aleutians crossing the antimeridian),
+  and building a topology can introduce more, since arcs get cut and re-threaded
+  without regard to which way round the result ends up. The symptom is one state
+  silently swallowing every click on the map.
+- **Dependencies are drawn but never asked about.** The 50m set adds 65 entries
+  over 110m, mostly territories — Guam, Jersey, the British Indian Ocean
+  Territory, and non-countries like the Siachen Glacier. A map with holes in it
+  is worse than useless, but "find Ashmore and Cartier Islands" is not a question
+  to put to a child, so they carry an `askable` flag.
 - **Every shape gets a guaranteed-interior point.** Hints, reveal pins and
   distance feedback all need a "here it is" coordinate, and a plain centroid falls
   in the sea for crescents like Croatia. Where the centroid escapes, the build

@@ -49,6 +49,21 @@ export interface Scene {
   areas: Admin1Feature[];
   showBorders: boolean;
   continentTint: boolean;
+  /**
+   * The country whose sub-divisions are being played, if any.
+   *
+   * Its own outline is never stroked. The country border comes from Natural
+   * Earth's 50m set while its states and counties come from 10m, so the two
+   * disagree by a kilometre here and there — and a coarse line drawn along the
+   * edge of a finer mosaic reads as a mistake, because it is one. The mosaic
+   * tiles the country exactly, so its outer edge *is* the border, drawn at the
+   * resolution the player is actually looking at.
+   *
+   * The fill underneath is still painted: it is the same colour as the
+   * divisions, so it cannot be seen, but it backs any hairline where the two
+   * datasets disagree and stops ocean showing through.
+   */
+  hostId: string | null;
   /** Feature the pointer is over, highlighted so taps feel responsive. */
   hoverId: string | null;
   /** Violet "the answer is inside this" context shape. */
@@ -185,7 +200,10 @@ export function renderGlobe(
       ctx.strokeStyle = PALETTE.landEdge;
       ctx.lineWidth = 0.9;
       ctx.beginPath();
-      for (const f of scene.countries) path(f as unknown as GeoPermissibleObjects);
+      for (const f of scene.countries) {
+        if (f.properties.id === scene.hostId) continue;
+        path(f as unknown as GeoPermissibleObjects);
+      }
       ctx.stroke();
     }
   }

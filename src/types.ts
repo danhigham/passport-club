@@ -19,6 +19,12 @@ export interface CountryProps {
   iso2: string | null;
   pop: number;
   tier: Tier;
+  /**
+   * Whether this is a place to ask about, as opposed to merely draw. Natural
+   * Earth's 50m set includes dependencies and territories that belong on the
+   * map but not in a quiz.
+   */
+  askable: boolean;
   /** A point guaranteed to lie inside the polygon (see scripts/build-data.mjs). */
   point: [number, number];
 }

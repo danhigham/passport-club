@@ -213,6 +213,12 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
       areas: session.areas,
       showBorders: config.showBorders,
       continentTint: config.mode === 'continent' && config.showBorders,
+      // In admin1 mode the country's own outline is left unstroked; its
+      // divisions define the border at a far higher resolution.
+      hostId:
+        config.mode === 'admin1' && config.scope.type === 'country'
+          ? config.scope.id
+          : null,
       hoverId,
       parent: parentShape,
       hint: revealed ? null : (hint?.shape ?? null),
@@ -226,6 +232,7 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
     session.areas,
     config.showBorders,
     config.mode,
+    config.scope,
     hoverId,
     parentShape,
     hint,

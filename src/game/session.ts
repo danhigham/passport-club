@@ -232,6 +232,8 @@ function countryTargets(core: CoreData, config: GameConfig): Target[] {
   const pool = countriesInScope(core, config)
     // Antarctica is a continent, not a country anyone should be asked to find.
     .filter((c) => c.properties.continent !== 'Antarctica')
+    // Dependencies and territories are drawn, but never asked about.
+    .filter((c) => c.properties.askable)
     .map<Target & { tier: Tier }>((c) => ({
       id: c.properties.id,
       kind: 'country',
@@ -352,7 +354,7 @@ export function poolSize(
     case 'country':
       return count(
         countriesInScope(core, config)
-          .filter((c) => c.properties.continent !== 'Antarctica')
+          .filter((c) => c.properties.continent !== 'Antarctica' && c.properties.askable)
           .map((c) => ({ tier: c.properties.tier })),
       );
     case 'admin1':

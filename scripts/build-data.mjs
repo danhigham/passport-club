@@ -19,6 +19,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geoArea, geoCentroid, geoContains, geoDistance } from 'd3-geo';
+import { topology } from 'topojson-server';
+import topojsonClient from 'topojson-client';
+
+const { feature: topoFeature, quantize } = topojsonClient;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -26,8 +30,22 @@ const CACHE = path.join(ROOT, '.cache');
 const OUT = path.join(ROOT, 'public', 'data');
 const BASE = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson';
 
+/**
+ * Quantisation grids, in steps across each file's own bounding box.
+ *
+ * TopoJSON stores coordinates as integers on a grid and deltas between them,
+ * which is most of why the files shrink so much. 1e5 across the whole world is
+ * about 400m; the admin-1 files each cover a single country, so a coarser grid
+ * number buys a much finer real-world resolution.
+ */
+const QUANTIZE_WORLD = 1e5;
+const QUANTIZE_COUNTRY = 1e4;
+
 const SOURCES = {
-  countries: 'ne_110m_admin_0_countries',
+  // 50m, not 110m. At 110m the whole United Kingdom is 56 points, which looks
+  // like a crude polygon the moment you zoom past the world view -- and next to
+  // the 10m county boundaries drawn on top of it, plainly broken.
+  countries: 'ne_50m_admin_0_countries',
   admin1: 'ne_10m_admin_1_states_provinces',
   cities: 'ne_50m_populated_places_simple',
 };
@@ -69,15 +87,19 @@ function span(geom) {
   return Math.max(maxX - minX, maxY - minY);
 }
 
-/** Round a ring's coordinates, drop consecutive duplicates, close the ring. */
-function thinRing(ring, p) {
-  const f = 10 ** p;
+/**
+ * Drop repeated points and close the ring.
+ *
+ * Note there is no rounding here any more. Coordinates used to be snapped to a
+ * decimal grid to save space, but TopoJSON quantisation now does that job far
+ * better — on a finer grid, and without throwing away the 50m detail this whole
+ * pipeline exists to deliver.
+ */
+function cleanRing(ring) {
   const out = [];
   for (const [x, y] of ring) {
-    const rx = Math.round(x * f) / f;
-    const ry = Math.round(y * f) / f;
     const last = out[out.length - 1];
-    if (!last || last[0] !== rx || last[1] !== ry) out.push([rx, ry]);
+    if (!last || last[0] !== x || last[1] !== y) out.push([x, y]);
   }
   if (out.length < 4) return null; // collapsed to a sliver — not clickable anyway
   const first = out[0];
@@ -88,40 +110,18 @@ function thinRing(ring, p) {
 
 const HEMISPHERE = 2 * Math.PI;
 
-/**
- * Force GeoJSON ring winding: exterior counter-clockwise, holes clockwise.
- *
- * This matters enormously. d3's `geoContains` is *spherical*, so a ring wound
- * the wrong way isn't a malformed polygon — it's a perfectly valid polygon
- * covering everything *except* the shape you meant. Natural Earth ships a few
- * of these (Alaska is the notorious one, thanks to the Aleutians crossing the
- * antimeridian), and the symptom is that one state silently swallows every
- * click on the map.
- */
-function orientRings(rings) {
-  return rings.map((ring, i) => {
-    const lone = geoArea({ type: 'Polygon', coordinates: [ring] });
-    const inverted = i === 0 ? lone > HEMISPHERE : lone < HEMISPHERE;
-    return inverted ? ring.slice().reverse() : ring;
-  });
-}
-
-/** Simplify a Polygon/MultiPolygon in-place-ish; returns null if nothing survives. */
+/** Tidy a Polygon/MultiPolygon; returns null if nothing survives. */
 function thinGeometry(geom) {
   if (!geom) return null;
-  // Tiny features (small islands, city-states) need more precision to survive.
-  const s = span(geom);
-  const p = s < 1 ? 4 : s < 5 ? 3 : 2;
 
   if (geom.type === 'Polygon') {
-    const rings = geom.coordinates.map((r) => thinRing(r, p)).filter(Boolean);
-    return rings.length ? { type: 'Polygon', coordinates: orientRings(rings) } : null;
+    const rings = geom.coordinates.map(cleanRing).filter(Boolean);
+    return rings.length ? { type: 'Polygon', coordinates: rings } : null;
   }
   if (geom.type === 'MultiPolygon') {
     const polys = geom.coordinates
-      .map((poly) => poly.map((r) => thinRing(r, p)).filter(Boolean))
-      .filter((poly) => poly.length > 0)
-      .map(orientRings);
+      .map((poly) => poly.map(cleanRing).filter(Boolean))
+      .filter((poly) => poly.length > 0);
     if (!polys.length) return null;
     return polys.length === 1
       ? { type: 'Polygon', coordinates: polys[0] }
@@ -129,6 +129,55 @@ function thinGeometry(geom) {
   }
   return geom;
 }
+
+/**
+ * Force ring winding on a packed topology: exterior counter-clockwise, holes
+ * clockwise.
+ *
+ * This matters enormously, and it has to happen *here*, after packing. d3's
+ * `geoContains` is spherical, so a ring wound the wrong way isn't malformed —
+ * it's a valid polygon covering everything *except* the shape you meant, and
+ * the symptom is one region silently swallowing every click on the map.
+ * Natural Earth ships a few such rings (Alaska, whose Aleutians cross the
+ * antimeridian), and building a topology can introduce more, because arcs are
+ * cut and re-threaded without regard to which way round the result ends up.
+ *
+ * A ring is reversed in TopoJSON by reversing its list of arcs and taking the
+ * ones-complement of each index, which is exactly how the format already
+ * encodes "traverse this shared arc backwards".
+ */
+function orientPolygonArcs(ringCoords, ringArcs) {
+  let flipped = 0;
+  ringCoords.forEach((ring, i) => {
+    const lone = geoArea({ type: 'Polygon', coordinates: [ring] });
+    const inverted = i === 0 ? lone > HEMISPHERE : lone < HEMISPHERE;
+    if (inverted) {
+      ringArcs[i] = ringArcs[i].map((a) => ~a).reverse();
+      flipped++;
+    }
+  });
+  return flipped;
+}
+
+function orientTopology(topo, name) {
+  const object = topo.objects[name];
+  const decoded = topoFeature(topo, object).features;
+  let flipped = 0;
+
+  decoded.forEach((f, i) => {
+    const geometry = object.geometries[i];
+    if (f.geometry.type === 'Polygon') {
+      flipped += orientPolygonArcs(f.geometry.coordinates, geometry.arcs);
+    } else if (f.geometry.type === 'MultiPolygon') {
+      f.geometry.coordinates.forEach((poly, k) => {
+        flipped += orientPolygonArcs(poly, geometry.arcs[k]);
+      });
+    }
+  });
+
+  return flipped;
+}
+
 
 /* ------------------------------------------------- representative points */
 
@@ -210,10 +259,60 @@ function writeJSON(rel, data) {
   return json.length;
 }
 
+/**
+ * Pack a FeatureCollection into TopoJSON, and hand back both the packed
+ * topology and the features as the game will actually see them.
+ *
+ * Two reasons this is worth the extra step. Size: shared borders are stored
+ * once rather than twice, and quantised integers beat decimal strings, which is
+ * what makes shipping 50m data affordable at all. Correctness: because a border
+ * is one shared arc, neighbours cannot drift apart into slivers of visible
+ * ocean the way independently-simplified polygons do.
+ *
+ * The decoded features are returned because anything measured from the geometry
+ * -- above all the guaranteed-interior point -- has to be measured from the
+ * coordinates that ship, not the ones we started with. Quantisation moves
+ * vertices, and a point computed before it can end up outside afterwards.
+ */
+function packTopology(name, features, quantization) {
+  const topo = quantize(
+    topology({ [name]: { type: 'FeatureCollection', features } }),
+    quantization,
+  );
+  const flipped = orientTopology(topo, name);
+  const decoded = topoFeature(topo, topo.objects[name]).features;
+  return { topo, decoded, flipped };
+}
+
+/**
+ * Attach the representative point to each geometry, measured from the decoded
+ * coordinates. `topoFeature` preserves geometry order, so the two lists line up.
+ */
+function attachPoints(topo, name, decoded, preferred) {
+  const geometries = topo.objects[name].geometries;
+  decoded.forEach((f, i) => {
+    geometries[i].properties.point = representativePoint(
+      f.geometry,
+      preferred ? preferred(f) : null,
+    );
+  });
+}
+
 /* ----------------------------------------------------- naming / difficulty */
 
 // Natural Earth's NAME column is already short & map-friendly, but a few
 // entries read oddly to a child. Override them here.
+/**
+ * Which Natural Earth `TYPE`s are fair game as quiz answers.
+ *
+ * The 50m file carries 242 entries against 110m's 177, and the extra 65 are
+ * mostly dependencies and territories: Guam, Jersey, the Isle of Man, the
+ * British Indian Ocean Territory, and non-countries like the Siachen Glacier.
+ * They should all be drawn — a map with holes in it is worse than useless — but
+ * "find Ashmore and Cartier Islands" is not a question to put to a child.
+ */
+const ASKABLE_TYPES = new Set(['Sovereign country', 'Country']);
+
 const COUNTRY_NAME_FIX = {
   'United States of America': 'United States',
   'Dem. Rep. Congo': 'Democratic Republic of the Congo',
@@ -426,10 +525,16 @@ async function main() {
         iso2: p.ISO_A2_EH !== '-99' ? p.ISO_A2_EH : null,
         pop: p.POP_EST || 0,
         tier: countryTier(p),
+        // Whether this is a place to *ask* about, as opposed to merely draw.
+        // The 50m file includes dependencies and disputed areas -- Guam, Jersey,
+        // the Siachen Glacier -- which belong on the map but not in a quiz for
+        // a child.
+        askable: ASKABLE_TYPES.has(p.TYPE),
         // Natural Earth's hand-placed label anchor is a much nicer "where is
         // it" marker than a computed centroid for odd shapes like Norway or
-        // Chile — but only when it actually lands on the country.
-        point: representativePoint(geometry, [p.LABEL_X, p.LABEL_Y]),
+        // Chile — but only when it actually lands on the country. Filled in
+        // after packing, from the coordinates that actually ship.
+        labelAnchor: [p.LABEL_X, p.LABEL_Y],
       },
       geometry,
     });
@@ -439,12 +544,15 @@ async function main() {
   // "Seven seas (open ocean)". A child asked to find Europe should still be
   // able to tap them, so adopt each one into its nearest real continent.
   const anchored = countries.filter((c) => CONTINENTS[c.properties.continent]);
+  // A rough centroid is plenty here: we only need to know which continent is
+  // closest, and the exact interior points aren't computed until after packing.
+  const roughCentre = (f) => geoCentroid(f);
   for (const c of countries) {
     if (CONTINENTS[c.properties.continent]) continue;
     let nearest = null;
     let bestD = Infinity;
     for (const other of anchored) {
-      const d = geoDistance(c.properties.point, other.properties.point);
+      const d = geoDistance(roughCentre(c), roughCentre(other));
       if (d < bestD) {
         bestD = d;
         nearest = other;
@@ -465,11 +573,28 @@ async function main() {
   }
 
   countries.sort((a, b) => a.properties.name.localeCompare(b.properties.name));
-  const nCountries = writeJSON('countries.json', {
-    type: 'FeatureCollection',
-    features: countries,
+
+  const packedCountries = packTopology('countries', countries, QUANTIZE_WORLD);
+  attachPoints(packedCountries.topo, 'countries', packedCountries.decoded, (f) => {
+    const a = f.properties.labelAnchor;
+    return a && Number.isFinite(a[0]) ? a : null;
   });
-  log(`wrote   countries.json  ${countries.length} features  ${kb(nCountries)}`);
+  for (const g of packedCountries.topo.objects.countries.geometries) {
+    delete g.properties.labelAnchor;
+  }
+
+  const nCountries = writeJSON('countries.topo.json', packedCountries.topo);
+  const askable = countries.filter((c) => c.properties.askable).length;
+  log(
+    `wrote   countries.topo.json  ${countries.length} features ` +
+      `(${askable} askable)  ${kb(nCountries)}`,
+  );
+
+  // Decoded features, for everything below that needs real coordinates.
+  const decodedCountries = topoFeature(
+    packedCountries.topo,
+    packedCountries.topo.objects.countries,
+  ).features;
 
   /* ---- continents (a registry, not geometry — we hit-test countries) ---- */
   const continents = [...continentSeen.entries()]
@@ -494,18 +619,18 @@ async function main() {
   const continentByA3 = new Map(countries.map((c) => [c.id, c.properties.continent]));
 
   /**
-   * The 110m country file drops micro-states, so ~45 cities (Singapore, Monaco,
-   * Hong Kong, Malta …) name a country we never draw. Resolve those against the
-   * polygon they actually sit in — or the closest one — so they can still be
-   * scoped, coloured and asked about.
+   * A few cities still name a country we don't draw — far fewer than at 110m,
+   * which omitted every micro-state — so resolve those against the polygon they
+   * actually sit in, or the closest one. Tested against the decoded geometry,
+   * since that is what the game will hit-test against.
    */
   const resolveHost = (lonLat) => {
-    for (const c of countries) {
+    for (const c of decodedCountries) {
       if (geoContains(c, lonLat)) return c;
     }
     let nearest = null;
     let bestD = Infinity;
-    for (const c of countries) {
+    for (const c of decodedCountries) {
       const d = geoDistance(c.properties.point, lonLat);
       if (d < bestD) {
         bestD = d;
@@ -626,7 +751,7 @@ async function main() {
           type: p.type_en || term.singular,
           // Kept for a future "quiz me on Scotland only" style filter.
           region: p.region || null,
-          point: representativePoint(geometry, [p.longitude, p.latitude]),
+          labelAnchor: [p.longitude, p.latitude],
           tier: 2,
           _area: p.area_sqkm || 0,
           _label: p.labelrank ?? 10,
@@ -638,10 +763,20 @@ async function main() {
     assignAdmin1Tiers(out);
 
     out.sort((a, b) => a.properties.name.localeCompare(b.properties.name));
-    const bytes = writeJSON(path.join('admin1', a3 + '.json'), {
-      type: 'FeatureCollection',
-      features: out,
+
+    // Packed per country, so a player downloads only the one they picked. The
+    // shared-arc encoding also means neighbouring counties genuinely share an
+    // edge rather than each carrying their own copy of it.
+    const packed = packTopology('admin1', out, QUANTIZE_COUNTRY);
+    attachPoints(packed.topo, 'admin1', packed.decoded, (f) => {
+      const a = f.properties.labelAnchor;
+      return a && Number.isFinite(a[0]) ? a : null;
     });
+    for (const g of packed.topo.objects.admin1.geometries) {
+      delete g.properties.labelAnchor;
+    }
+
+    const bytes = writeJSON(path.join('admin1', a3 + '.topo.json'), packed.topo);
     admin1Bytes += bytes;
     index.push({
       country: a3,

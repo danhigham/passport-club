@@ -1,9 +1,19 @@
+import { feature as topoFeature } from 'topojson-client';
+import type {
+  FeatureCollection,
+  GeoJsonProperties,
+  MultiPolygon,
+  Polygon,
+} from 'geojson';
+import type { GeometryCollection, Topology } from 'topojson-specification';
 import type {
   Admin1Feature,
   Admin1IndexEntry,
+  Admin1Props,
   City,
   Continent,
   CountryFeature,
+  CountryProps,
 } from '../types';
 
 /**
@@ -16,6 +26,24 @@ import type {
  */
 
 const BASE = import.meta.env.BASE_URL + 'data/';
+
+/**
+ * Polygons ship as TopoJSON and are decoded here.
+ *
+ * It is worth the decode step: shared borders are stored once instead of twice
+ * and coordinates are quantised integers, which is what makes 50m-resolution
+ * outlines affordable. The whole world costs about 260kb over the wire, less
+ * than the plain 110m GeoJSON it replaced, at roughly eighteen times the detail.
+ */
+function decode<P extends GeoJsonProperties>(topo: Topology, layer: string) {
+  const object = topo.objects[layer] as GeometryCollection<P>;
+  if (!object) throw new Error(`TopoJSON is missing its "${layer}" layer`);
+  // topoFeature is overloaded; a GeometryCollection always yields a collection.
+  return topoFeature(topo, object) as unknown as FeatureCollection<
+    Polygon | MultiPolygon,
+    P
+  >;
+}
 
 export interface CoreData {
   countries: CountryFeature[];
@@ -39,14 +67,15 @@ let corePromise: Promise<CoreData> | null = null;
 export function loadCore(): Promise<CoreData> {
   if (corePromise) return corePromise;
   corePromise = (async () => {
-    const [countryFC, continents, cities, admin1Index] = await Promise.all([
-      getJSON<{ features: CountryFeature[] }>('countries.json'),
+    const [countryTopo, continents, cities, admin1Index] = await Promise.all([
+      getJSON<Topology>('countries.topo.json'),
       getJSON<Continent[]>('continents.json'),
       getJSON<City[]>('cities.json'),
       getJSON<Admin1IndexEntry[]>('admin1/index.json'),
     ]);
 
-    const countries = countryFC.features;
+    const countries = decode<CountryProps>(countryTopo, 'countries')
+      .features as CountryFeature[];
     return {
       countries,
       countryById: new Map(countries.map((c) => [c.properties.id, c])),
@@ -69,8 +98,8 @@ const admin1Cache = new Map<string, Promise<Admin1Feature[]>>();
 export function loadAdmin1(countryId: string): Promise<Admin1Feature[]> {
   let p = admin1Cache.get(countryId);
   if (!p) {
-    p = getJSON<{ features: Admin1Feature[] }>(`admin1/${countryId}.json`)
-      .then((fc) => fc.features)
+    p = getJSON<Topology>(`admin1/${countryId}.topo.json`)
+      .then((topo) => decode<Admin1Props>(topo, 'admin1').features as Admin1Feature[])
       .catch((err) => {
         admin1Cache.delete(countryId);
         throw err;

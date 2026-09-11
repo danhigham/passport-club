@@ -90,16 +90,18 @@ async function clickMap(page, [x, y]) {
  * all, so turn the planet to face it first — exactly what a player does by
  * dragging.
  */
-/** Great-circle separation in degrees. */
-function angularDistance(a, b) {
-  const r = Math.PI / 180;
-  const [lon1, lat1] = [a[0] * r, a[1] * r];
-  const [lon2, lat2] = [b[0] * r, b[1] * r];
-  const h =
-    Math.sin((lat2 - lat1) / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2;
-  return (2 * Math.asin(Math.min(1, Math.sqrt(h)))) / r;
-}
+/**
+ * How far from the centre of the view a click is allowed to be, as a fraction
+ * of the half-viewport. Beyond this the globe is turned first.
+ *
+ * Measured on screen rather than in degrees, because the two are not
+ * interchangeable: on a sphere the angle covered by a pixel grows without bound
+ * towards the limb, and how close the limb *is* depends on the zoom. At the
+ * world view the horizon is 90 degrees away; zoomed to 2.5x it is barely 23.
+ * A fixed angular threshold is therefore right at one zoom and wrong at every
+ * other, whereas "reasonably central on screen" holds at all of them.
+ */
+const CENTRAL_FRACTION = 0.6;
 
 async function clickPlace(page, lonLat) {
   // A fresh round ignores input briefly, so a mistimed tap can't be spent on
@@ -110,21 +112,19 @@ async function clickPlace(page, lonLat) {
     null,
     { timeout: 8000 },
   );
-  const { camera } = await page.evaluate(() => ({ camera: window.__passportClub.camera }));
+  const box = await page.locator('.globe-stage').boundingBox();
+  const limit = (CENTRAL_FRACTION * Math.min(box.width, box.height)) / 2;
+  const isCentral = (p) =>
+    p && Math.hypot(p[0] - box.width / 2, p[1] - box.height / 2) <= limit;
 
-  // Turn the globe if the target is round the back *or* out near the limb.
-  // Near the edge of the disc a single pixel spans a huge angle, so a click
-  // there lands almost anywhere — a real player would spin it round to face
-  // them first, and so must the test.
-  const needsTurning =
-    angularDistance(camera.center, lonLat) > 50 ||
-    (await page.evaluate((pt) => window.__passportClub.project(pt), lonLat)) === null;
-
-  if (needsTurning) {
+  // Turn the globe if the target is round the back, or out where a pixel covers
+  // too much ground to click precisely. A real player does exactly this.
+  let xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
+  if (!isCentral(xy)) {
     await page.evaluate((pt) => window.__passportClub.faceTo(pt), lonLat);
     await page.waitForTimeout(150);
+    xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
   }
-  const xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
   if (!xy) return false;
   await clickMap(page, xy);
   return true;
