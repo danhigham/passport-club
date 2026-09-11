@@ -47,6 +47,12 @@ function decode<P extends GeoJsonProperties>(topo: Topology, layer: string) {
 
 export interface CoreData {
   countries: CountryFeature[];
+  /**
+   * A simplified copy of the same countries, same ids and same order. Drawn
+   * whenever the camera is far out or moving, where the detail cannot be seen
+   * but still costs a full re-projection every frame.
+   */
+  countriesCoarse: CountryFeature[];
   countryById: Map<string, CountryFeature>;
   continents: Continent[];
   continentById: Map<string, Continent>;
@@ -67,8 +73,9 @@ let corePromise: Promise<CoreData> | null = null;
 export function loadCore(): Promise<CoreData> {
   if (corePromise) return corePromise;
   corePromise = (async () => {
-    const [countryTopo, continents, cities, admin1Index] = await Promise.all([
+    const [countryTopo, coarseTopo, continents, cities, admin1Index] = await Promise.all([
       getJSON<Topology>('countries.topo.json'),
+      getJSON<Topology>('countries-coarse.topo.json'),
       getJSON<Continent[]>('continents.json'),
       getJSON<City[]>('cities.json'),
       getJSON<Admin1IndexEntry[]>('admin1/index.json'),
@@ -76,8 +83,11 @@ export function loadCore(): Promise<CoreData> {
 
     const countries = decode<CountryProps>(countryTopo, 'countries')
       .features as CountryFeature[];
+    const countriesCoarse = decode<CountryProps>(coarseTopo, 'countries')
+      .features as CountryFeature[];
     return {
       countries,
+      countriesCoarse,
       countryById: new Map(countries.map((c) => [c.properties.id, c])),
       continents,
       continentById: new Map(continents.map((c) => [c.id, c])),
@@ -92,14 +102,26 @@ export function loadCore(): Promise<CoreData> {
   return corePromise;
 }
 
-const admin1Cache = new Map<string, Promise<Admin1Feature[]>>();
+/** Both levels of detail for one country's sub-divisions. */
+export interface Admin1Data {
+  features: Admin1Feature[];
+  coarse: Admin1Feature[];
+}
 
-/** Load one country's states / provinces / counties. */
-export function loadAdmin1(countryId: string): Promise<Admin1Feature[]> {
+const admin1Cache = new Map<string, Promise<Admin1Data>>();
+
+/** Load one country's states / provinces / counties, at both detail levels. */
+export function loadAdmin1(countryId: string): Promise<Admin1Data> {
   let p = admin1Cache.get(countryId);
   if (!p) {
-    p = getJSON<Topology>(`admin1/${countryId}.topo.json`)
-      .then((topo) => decode<Admin1Props>(topo, 'admin1').features as Admin1Feature[])
+    p = Promise.all([
+      getJSON<Topology>(`admin1/${countryId}.topo.json`),
+      getJSON<Topology>(`admin1/${countryId}.coarse.topo.json`),
+    ])
+      .then(([detail, coarse]) => ({
+        features: decode<Admin1Props>(detail, 'admin1').features as Admin1Feature[],
+        coarse: decode<Admin1Props>(coarse, 'admin1').features as Admin1Feature[],
+      }))
       .catch((err) => {
         admin1Cache.delete(countryId);
         throw err;

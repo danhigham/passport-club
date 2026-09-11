@@ -63,7 +63,7 @@ export default function App() {
       const token = ++startToken.current;
       setPhase('loading');
       try {
-        let admin1: Admin1Feature[] = [];
+        let admin1 = { features: [] as Admin1Feature[], coarse: [] as Admin1Feature[] };
         if (withConfig.mode === 'admin1' && withConfig.scope.type === 'country') {
           admin1 = await loadAdmin1(withConfig.scope.id);
         }

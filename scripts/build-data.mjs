@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geoArea, geoCentroid, geoContains, geoDistance } from 'd3-geo';
 import { topology } from 'topojson-server';
+import { presimplify, quantile, simplify } from 'topojson-simplify';
 import topojsonClient from 'topojson-client';
 
 const { feature: topoFeature, quantize } = topojsonClient;
@@ -40,6 +41,19 @@ const BASE = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/mas
  */
 const QUANTIZE_WORLD = 1e5;
 const QUANTIZE_COUNTRY = 1e4;
+
+/**
+ * The coarse level of detail: what fraction of the world's vertices survive.
+ *
+ * Every frame of a spin re-projects whatever is on screen, so drawing 50m
+ * detail at the world view costs ten times what it can possibly show — the
+ * globe is about 600px across there, which puts roughly half a degree in each
+ * pixel against the 0.05 degree detail of the source. This cut-down copy is
+ * used whenever the camera is far out or moving, and is visually
+ * indistinguishable at those sizes.
+ */
+const COARSE_KEEP = 0.15;
+const QUANTIZE_COARSE = 2e4;
 
 const SOURCES = {
   // 50m, not 110m. At 110m the whole United Kingdom is 56 points, which looks
@@ -157,6 +171,25 @@ function orientPolygonArcs(ringCoords, ringArcs) {
     }
   });
   return flipped;
+}
+
+/**
+ * A simplified copy of a layer, for drawing when detail cannot be seen.
+ *
+ * Simplification is topology-aware: it works on shared arcs, so a border
+ * thinned on one side is thinned identically on the other and neighbours stay
+ * welded together. Feature order and ids are untouched, so the coarse and
+ * detailed copies are interchangeable at render time.
+ */
+function coarsenTopology(name, features, keep, quantization) {
+  let topo = presimplify(topology({ [name]: { type: 'FeatureCollection', features } }));
+  // `quantile` takes the fraction of vertices to *retain*, not to discard.
+  topo = simplify(topo, quantile(topo, keep));
+  // presimplify leaves a weight on every point; drop it before quantising.
+  topo.arcs = topo.arcs.map((arc) => arc.map((p) => [p[0], p[1]]));
+  topo = quantize(topo, quantization);
+  orientTopology(topo, name);
+  return topo;
 }
 
 function orientTopology(topo, name) {
@@ -590,6 +623,19 @@ async function main() {
       `(${askable} askable)  ${kb(nCountries)}`,
   );
 
+  const coarseTopo = coarsenTopology('countries', countries, COARSE_KEEP, QUANTIZE_COARSE);
+  const nCoarse = writeJSON('countries-coarse.topo.json', coarseTopo);
+  const countPoints = (fc) =>
+    fc.reduce((n, f) => {
+      const walk = (c) => (typeof c[0] === 'number' ? 1 : c.reduce((m, x) => m + walk(x), 0));
+      return n + walk(f.geometry.coordinates);
+    }, 0);
+  log(
+    `wrote   countries-coarse.topo.json  ${kb(nCoarse)}  ` +
+      `${countPoints(topoFeature(coarseTopo, coarseTopo.objects.countries).features).toLocaleString()}` +
+      ` points vs ${countPoints(packedCountries.decoded).toLocaleString()}`,
+  );
+
   // Decoded features, for everything below that needs real coordinates.
   const decodedCountries = topoFeature(
     packedCountries.topo,
@@ -776,7 +822,14 @@ async function main() {
       delete g.properties.labelAnchor;
     }
 
-    const bytes = writeJSON(path.join('admin1', a3 + '.topo.json'), packed.topo);
+    let bytes = writeJSON(path.join('admin1', a3 + '.topo.json'), packed.topo);
+
+    // A coarse copy too. The United States alone is 60,000 vertices; redrawing
+    // that on every frame of a spin costs more than it can show while moving.
+    bytes += writeJSON(
+      path.join('admin1', a3 + '.coarse.topo.json'),
+      coarsenTopology('admin1', out, COARSE_KEEP, QUANTIZE_COUNTRY),
+    );
     admin1Bytes += bytes;
     index.push({
       country: a3,

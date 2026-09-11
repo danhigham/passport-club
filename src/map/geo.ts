@@ -134,6 +134,21 @@ export function screenToLonLat(
   return [inv[0], inv[1]];
 }
 
+/**
+ * How far from the centre of the view anything can possibly be drawn, in
+ * radians of arc.
+ *
+ * At the world view this is the full hemisphere. Zoomed in it shrinks fast, and
+ * with it the amount of the planet worth projecting at all: at 8x barely a
+ * seventh of a hemisphere reaches the screen. Measured to the corner of the
+ * canvas so nothing is culled while still visible.
+ */
+export function visibleRadians(globe: Globe, camera: Camera): number {
+  const halfDiagonal = Math.hypot(globe.width, globe.height) / 2;
+  const radius = globe.baseScale * camera.zoom;
+  return Math.asin(Math.min(1, halfDiagonal / radius));
+}
+
 /** Is this place on the side of the globe facing us? */
 export function isVisible(camera: Camera, lonLat: [number, number]): boolean {
   // A hair under 90° so places right on the horizon aren't drawn edge-on.
@@ -153,6 +168,71 @@ export function lonLatToScreen(
   return [p[0], p[1]];
 }
 
+/**
+ * A cached bounding cap: the smallest circle on the sphere containing a shape.
+ *
+ * Used to throw work away before it is done. A feature whose cap lies entirely
+ * beyond the horizon cannot contribute a single pixel, and skipping it costs
+ * one distance comparison instead of projecting every one of its vertices.
+ * Zoomed into a country this discards almost the whole world.
+ */
+export interface Cap {
+  center: [number, number];
+  radius: number;
+}
+
+const caps = new WeakMap<object, Cap>();
+
+export function capOf(feature: AreaFeature): Cap {
+  const cached = caps.get(feature);
+  if (cached) return cached;
+
+  // Mean of the vertices as unit vectors, normalised back onto the sphere.
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let n = 0;
+  const walk = (c: unknown): void => {
+    if (typeof (c as number[])[0] === 'number') {
+      const [lon, lat] = c as [number, number];
+      const rLon = (lon * Math.PI) / 180;
+      const rLat = (lat * Math.PI) / 180;
+      const cosLat = Math.cos(rLat);
+      x += cosLat * Math.cos(rLon);
+      y += cosLat * Math.sin(rLon);
+      z += Math.sin(rLat);
+      n++;
+    } else {
+      for (const child of c as unknown[]) walk(child);
+    }
+  };
+  walk(feature.geometry.coordinates);
+
+  let center: [number, number] = feature.properties.point;
+  const len = Math.hypot(x, y, z);
+  if (n && len > 1e-9) {
+    center = [
+      (Math.atan2(y / len, x / len) * 180) / Math.PI,
+      (Math.asin(Math.max(-1, Math.min(1, z / len))) * 180) / Math.PI,
+    ];
+  }
+
+  let radius = 0;
+  const measure = (c: unknown): void => {
+    if (typeof (c as number[])[0] === 'number') {
+      const d = geoDistance(center, c as [number, number]);
+      if (d > radius) radius = d;
+    } else {
+      for (const child of c as unknown[]) measure(child);
+    }
+  };
+  measure(feature.geometry.coordinates);
+
+  const cap = { center, radius };
+  caps.set(feature, cap);
+  return cap;
+}
+
 /* ------------------------------------------------------------ hit-testing */
 
 /**
@@ -164,6 +244,11 @@ export function findAreaAt(
   lonLat: [number, number],
 ): AreaFeature | null {
   for (const f of features) {
+    // Reject on the bounding cap first. `geoContains` has to walk every ring of
+    // a shape; this is one distance comparison, and it discards almost all of
+    // them. Hit-testing runs on every mouse move, so the difference is felt.
+    const cap = capOf(f);
+    if (geoDistance(cap.center, lonLat) > cap.radius) continue;
     if (geoContains(f as GeoPermissibleObjects, lonLat)) return f;
   }
   return null;

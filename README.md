@@ -85,9 +85,10 @@ API keys, no runtime dependency on anyone else's infrastructure.
 | File | Size | Contents |
 | --- | --- | --- |
 | `countries.topo.json` | 761 kb | 242 country polygons (204 askable) at 50m |
+| `countries-coarse.topo.json` | 212 kb | The same countries, 15% of the vertices |
 | `continents.json` | 1 kb | Continent registry and opening viewpoints |
 | `cities.json` | 249 kb | 1,248 populated places |
-| `admin1/<ISO3>.topo.json` | 7.9 mb total | 4,542 divisions across 211 countries |
+| `admin1/<ISO3>.topo.json` | 10.7 mb total | 4,542 divisions across 211 countries, both detail levels |
 
 The admin-1 set is far too big to ship as one file, so it's split per country and
 fetched only when a player picks that country.
@@ -134,6 +135,48 @@ The build does more than repackage:
 - **Continent viewpoints are hand-set**, because Natural Earth files all of
   Russia under Europe — so the true centroid of "Europe" lands in central Siberia.
 
+### Making a vector globe fast
+
+MapTap sidesteps this problem by texturing a sphere with satellite raster tiles:
+the GPU does all the work and nothing is ever re-projected. A vector globe has
+no such luxury — every frame of a spin re-projects the world from scratch — and
+the first version cost **107–159 ms per frame**, which is 6–9 fps.
+
+It now runs in 6–16 ms. Three changes, in order of how much they bought:
+
+**Level of detail.** At the world view the globe is ~600 px across, which puts
+roughly half a degree in every pixel — against source data detailed to 0.05°.
+We were paying for ten times the detail a pixel could show. A simplified copy
+(15% of the vertices) is drawn whenever the camera is far out *or moving*, and
+the full resolution only when it is both zoomed in and still. The simplification
+is topology-aware, so a border thinned on one side is thinned identically on the
+other and neighbours stay welded together.
+
+**Project once, not twice.** Each outline was walked once to fill it and again
+to stroke it — re-projecting a hundred thousand vertices to draw the very same
+shape. Projecting into a `Path2D` and reusing it makes the second pass free.
+
+**Horizon culling.** Each shape gets a bounding cap (the smallest circle on the
+sphere containing it), cached on first use. If the cap lies entirely beyond what
+the viewport can reach, the shape is skipped for the cost of one distance
+comparison instead of projecting every vertex. Zoomed into a country this throws
+away most of the planet. The same caps prefilter hit-testing, which runs on
+every mouse move.
+
+```
+scenario              before     after
+Countries, world      106.8ms    7.5ms
+Countries, Europe     143.1ms   10.5ms
+Continents (tinted)    80.5ms    6.3ms
+Counties, UK          159.1ms   11.5ms
+States, USA           134.6ms   16.1ms
+```
+
+`npm run bench` reproduces this: it spins the globe under a scripted drag and
+reports paint times. Frame timing is instrumented permanently — it costs two
+clock reads per frame, and rendering cost is the thing most likely to regress
+here.
+
 ### Layout
 
 ```
@@ -162,6 +205,7 @@ scripts/
 ```bash
 npm run verify   # types + data invariants + game logic
 npm run e2e      # plays the game in a headless browser
+npm run bench    # rendering performance
 ```
 
 Three layers, each catching something the others can't:

@@ -17,7 +17,7 @@ import {
   type Camera,
   type Globe,
 } from '../map/geo';
-import { renderGlobe, type Scene } from '../map/render';
+import { renderGlobe, renderStats, resetRenderStats, type Scene } from '../map/render';
 import { useGlobeControls } from '../map/useGlobeControls';
 import type { Session } from '../game/session';
 import { isArmed, type JudgeInput, type RoundState } from '../game/useGame';
@@ -30,6 +30,12 @@ interface Props {
   round: RoundState | null;
   onGuess: (input: JudgeInput) => void;
 }
+
+/**
+ * Zoom at which full-resolution outlines start being drawn. Below this the
+ * globe is small enough that the simplified copy is indistinguishable.
+ */
+const DETAIL_ZOOM = 1.8;
 
 /** A label only appears once its shape is at least this wide on screen. */
 const LABEL_MIN_PX = 40;
@@ -208,9 +214,19 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    /*
+     * Detail is only worth paying for when it can be seen and there is time to
+     * draw it. While the globe is moving every frame re-projects the world from
+     * scratch, so a spin uses the simplified copy; so does the world view,
+     * where the globe is a few hundred pixels across and 50m detail is an order
+     * of magnitude finer than a pixel.
+     */
+    const moving = controls.isSpinning || controls.isAnimating;
+    const detailed = !moving && camera.zoom >= DETAIL_ZOOM;
+
     const scene: Scene = {
-      countries: session.countries,
-      areas: session.areas,
+      countries: detailed ? session.countries : session.countriesCoarse,
+      areas: detailed ? session.areas : session.areasCoarse,
       showBorders: config.showBorders,
       continentTint: config.mode === 'continent' && config.showBorders,
       // In admin1 mode the country's own outline is left unstroked; its
@@ -228,8 +244,12 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
   }, [
     globe,
     camera,
+    controls.isSpinning,
+    controls.isAnimating,
     session.countries,
+    session.countriesCoarse,
     session.areas,
+    session.areasCoarse,
     config.showBorders,
     config.mode,
     config.scope,
@@ -322,6 +342,8 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
       /** Live, because arming is a matter of elapsed time, not render state. */
       armed: () => isArmed(round),
       animating: controls.isAnimating,
+      renderStats,
+      resetRenderStats,
       guesses: round?.guesses.map((g) => ({ at: g.at, verdict: g.verdict })) ?? [],
       hint: hint && { center: hint.center },
       camera,

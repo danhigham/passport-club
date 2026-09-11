@@ -1,7 +1,7 @@
-import { geoGraticule10, geoPath } from 'd3-geo';
-import type { GeoPermissibleObjects } from 'd3-geo';
-import { applyCamera, type Camera, type Globe } from './geo';
-import type { Admin1Feature, CountryFeature } from '../types';
+import { geoDistance, geoGraticule10, geoPath } from 'd3-geo';
+import type { GeoPermissibleObjects, GeoProjection } from 'd3-geo';
+import { applyCamera, capOf, visibleRadians, type Camera, type Globe } from './geo';
+import type { Admin1Feature, AreaFeature, CountryFeature } from '../types';
 
 /**
  * Canvas renderer for the globe.
@@ -74,8 +74,59 @@ export interface Scene {
   answer: GeoPermissibleObjects | null;
 }
 
+/**
+ * Rolling record of how long recent frames took to paint.
+ *
+ * Kept always-on because it costs two clock reads per frame, and rendering cost
+ * is the single thing most likely to regress on this project: every frame of a
+ * spin re-projects the world from scratch.
+ */
+const FRAME_SAMPLES = 120;
+const frameTimes: number[] = [];
+
+export function renderStats() {
+  if (!frameTimes.length) return null;
+  const sorted = [...frameTimes].sort((a, b) => a - b);
+  const mean = frameTimes.reduce((s, n) => s + n, 0) / frameTimes.length;
+  return {
+    frames: frameTimes.length,
+    mean: +mean.toFixed(2),
+    p50: +sorted[sorted.length >> 1].toFixed(2),
+    p95: +sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))].toFixed(2),
+    max: +sorted[sorted.length - 1].toFixed(2),
+  };
+}
+
+export function resetRenderStats() {
+  frameTimes.length = 0;
+}
+
 const SPHERE = { type: 'Sphere' } as GeoPermissibleObjects;
 const GRATICULE = geoGraticule10() as unknown as GeoPermissibleObjects;
+
+/**
+ * Project a set of features into a single reusable Path2D.
+ *
+ * The point is that projection happens exactly once. Previously the same
+ * geometry was walked twice, once to fill and again to stroke, which meant
+ * re-projecting a hundred thousand vertices to draw the very same outline.
+ * A Path2D holds the projected result so the second pass is free.
+ */
+function buildPath(
+  projection: GeoProjection,
+  features: Iterable<AreaFeature>,
+  camera: Camera,
+  horizon: number,
+): Path2D {
+  const path2d = new Path2D();
+  const draw = geoPath(projection, path2d as unknown as CanvasRenderingContext2D);
+  for (const f of features) {
+    const cap = capOf(f);
+    if (geoDistance(camera.center, cap.center) - cap.radius > horizon) continue;
+    draw(f as unknown as GeoPermissibleObjects);
+  }
+  return path2d;
+}
 
 /* ------------------------------------------------------------- starfield */
 
@@ -118,6 +169,7 @@ export function renderGlobe(
   const cx = w / 2;
   const cy = h / 2;
   const r = globe.baseScale * camera.zoom;
+  const started = performance.now();
 
   ctx.save();
   ctx.clearRect(0, 0, w, h);
@@ -147,6 +199,11 @@ export function renderGlobe(
   }
 
   /* --- the ocean, lit from the upper left --- */
+  // The sphere outline is needed three times (ocean, limb shading, rim light),
+  // so project it once.
+  const spherePath = new Path2D();
+  geoPath(projection, spherePath as unknown as CanvasRenderingContext2D)(SPHERE);
+
   const sea = ctx.createRadialGradient(
     cx - r * 0.35,
     cy - r * 0.42,
@@ -158,9 +215,7 @@ export function renderGlobe(
   sea.addColorStop(0, PALETTE.oceanLit);
   sea.addColorStop(1, PALETTE.oceanDark);
   ctx.fillStyle = sea;
-  ctx.beginPath();
-  path(SPHERE);
-  ctx.fill();
+  ctx.fill(spherePath);
 
   /* --- graticule --- */
   ctx.strokeStyle = PALETTE.graticule;
@@ -171,6 +226,8 @@ export function renderGlobe(
 
   /* --- land --- */
   ctx.lineJoin = 'round';
+  const horizon = visibleRadians(globe, camera);
+
   if (scene.continentTint) {
     // Grouped by continent so each lands in one fill call.
     const groups = new Map<string, CountryFeature[]>();
@@ -179,61 +236,60 @@ export function renderGlobe(
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(c);
     }
+    const outlines = new Path2D();
     for (const [continent, members] of groups) {
+      const group = buildPath(projection, members, camera, horizon);
       ctx.fillStyle = PALETTE.continent[continent] ?? PALETTE.land;
-      ctx.beginPath();
-      for (const f of members) path(f as unknown as GeoPermissibleObjects);
-      ctx.fill();
+      ctx.fill(group);
+      outlines.addPath(group);
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.4)';
     ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    for (const f of scene.countries) path(f as unknown as GeoPermissibleObjects);
-    ctx.stroke();
+    ctx.stroke(outlines);
   } else {
+    const land = buildPath(projection, scene.countries, camera, horizon);
     ctx.fillStyle = PALETTE.land;
-    ctx.beginPath();
-    for (const f of scene.countries) path(f as unknown as GeoPermissibleObjects);
-    ctx.fill();
+    ctx.fill(land);
 
     if (scene.showBorders) {
+      // The host country's own border is omitted: its divisions are drawn on
+      // top at a far higher resolution, and a coarse line along the edge of a
+      // finer mosaic reads as a mistake.
+      const borders = scene.hostId
+        ? buildPath(
+            projection,
+            scene.countries.filter((f) => f.properties.id !== scene.hostId),
+            camera,
+            horizon,
+          )
+        : land;
       ctx.strokeStyle = PALETTE.landEdge;
       ctx.lineWidth = 0.9;
-      ctx.beginPath();
-      for (const f of scene.countries) {
-        if (f.properties.id === scene.hostId) continue;
-        path(f as unknown as GeoPermissibleObjects);
-      }
-      ctx.stroke();
+      ctx.stroke(borders);
     }
   }
 
   /* --- states / provinces / counties --- */
   if (scene.areas.length) {
+    const areas = buildPath(projection, scene.areas, camera, horizon);
     ctx.fillStyle = PALETTE.land;
-    ctx.beginPath();
-    for (const f of scene.areas) path(f as unknown as GeoPermissibleObjects);
-    ctx.fill();
+    ctx.fill(areas);
 
     if (scene.showBorders) {
       ctx.strokeStyle = PALETTE.admin1Edge;
       ctx.lineWidth = 0.85;
-      ctx.beginPath();
-      for (const f of scene.areas) path(f as unknown as GeoPermissibleObjects);
-      ctx.stroke();
+      ctx.stroke(areas);
     }
   }
 
   /* --- hover --- */
   if (scene.hoverId) {
-    const pool: GeoPermissibleObjects[] = (
-      scene.areas.length ? scene.areas : scene.countries
-    ).filter((f) => f.properties.id === scene.hoverId) as unknown as GeoPermissibleObjects[];
+    const pool = (scene.areas.length ? scene.areas : scene.countries).filter(
+      (f) => f.properties.id === scene.hoverId,
+    );
     if (pool.length) {
       ctx.fillStyle = PALETTE.landHover;
-      ctx.beginPath();
-      for (const f of pool) path(f);
-      ctx.fill();
+      ctx.fill(buildPath(projection, pool, camera, horizon));
     }
   }
 
@@ -276,16 +332,15 @@ export function renderGlobe(
   limb.addColorStop(0.82, 'rgba(4,14,28,0.12)');
   limb.addColorStop(1, 'rgba(4,14,28,0.42)');
   ctx.fillStyle = limb;
-  ctx.beginPath();
-  path(SPHERE);
-  ctx.fill();
+  ctx.fill(spherePath);
 
   /* --- rim light --- */
   ctx.strokeStyle = PALETTE.rim;
   ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  path(SPHERE);
-  ctx.stroke();
+  ctx.stroke(spherePath);
 
   ctx.restore();
+
+  frameTimes.push(performance.now() - started);
+  if (frameTimes.length > FRAME_SAMPLES) frameTimes.shift();
 }

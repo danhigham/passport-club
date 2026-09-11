@@ -186,8 +186,12 @@ export interface Session {
   targets: Target[];
   /** Country polygons drawn as the base map. */
   countries: CountryFeature[];
+  /** The same countries, simplified, for when detail cannot be seen. */
+  countriesCoarse: CountryFeature[];
   /** Sub-national polygons drawn on top (admin1 mode only). */
   areas: Admin1Feature[];
+  /** The same divisions, simplified, for when the camera is moving. */
+  areasCoarse: Admin1Feature[];
   /** Cities eligible to be clicked / drawn as dots (city mode only). */
   cities: City[];
   /** Everything a click can land on, in hit-test priority order. */
@@ -301,7 +305,10 @@ export function citiesInScope(core: CoreData, config: GameConfig): City[] {
 export function buildSession(
   core: CoreData,
   config: GameConfig,
-  admin1: Admin1Feature[] = [],
+  admin1: { features: Admin1Feature[]; coarse: Admin1Feature[] } = {
+    features: [],
+    coarse: [],
+  },
 ): Session {
   const cities = citiesInScope(core, config);
   const focus = focusFor(core, config);
@@ -315,7 +322,7 @@ export function buildSession(
       targets = countryTargets(core, config);
       break;
     case 'admin1':
-      targets = admin1Targets(core, config, admin1);
+      targets = admin1Targets(core, config, admin1.features);
       break;
     case 'city':
       targets = cityTargets(config, cities);
@@ -326,10 +333,12 @@ export function buildSession(
     config,
     targets,
     countries: core.countries,
-    areas: config.mode === 'admin1' ? admin1 : [],
+    countriesCoarse: core.countriesCoarse,
+    areas: config.mode === 'admin1' ? admin1.features : [],
+    areasCoarse: config.mode === 'admin1' ? admin1.coarse : [],
     cities,
     // In admin1 mode a click should resolve to a state before a country.
-    hitAreas: config.mode === 'admin1' ? admin1 : core.countries,
+    hitAreas: config.mode === 'admin1' ? admin1.features : core.countries,
     focus,
     home: homeFor(core, config),
   };
