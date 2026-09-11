@@ -1,0 +1,366 @@
+#!/usr/bin/env node
+/**
+ * Browser test: actually plays the game.
+ *
+ * Builds the app, serves it, then for each mode drives a real Chromium through
+ * a full round — reading each question off the screen, projecting the answer's
+ * real-world coordinates to a pixel position, and clicking there. It asserts
+ * the game accepts correct clicks, rejects wrong ones, and reaches the results
+ * screen with the score it should have.
+ *
+ *   node scripts/e2e.mjs
+ */
+
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const PORT = 4317;
+const ORIGIN = `http://localhost:${PORT}`;
+
+/* Playwright's bundled revision may not be the one on this machine. */
+function findChrome() {
+  const base = path.join(process.env.HOME ?? '', '.cache', 'ms-playwright');
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  if (fs.existsSync(base)) {
+    const dirs = fs
+      .readdirSync(base)
+      .filter((d) => d.startsWith('chromium-'))
+      .sort()
+      .reverse();
+    for (const d of dirs) {
+      const exe = path.join(base, d, 'chrome-linux64', 'chrome');
+      if (fs.existsSync(exe)) return exe;
+    }
+  }
+  for (const p of ['/usr/bin/google-chrome', '/usr/bin/chromium']) {
+    if (fs.existsSync(p)) return p;
+  }
+  throw new Error('No Chromium found. Set CHROME_PATH.');
+}
+
+/* ---------------------------------------------------------------- server */
+
+const server = spawn(
+  'npx',
+  ['vite', 'preview', '--port', String(PORT), '--strictPort'],
+  { cwd: ROOT, stdio: 'ignore' },
+);
+const stopServer = () => server.kill('SIGTERM');
+process.on('exit', stopServer);
+
+async function waitForServer(timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(ORIGIN);
+      if (res.ok) return;
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('Preview server never came up');
+}
+
+/* ----------------------------------------------------------------- suite */
+
+let failures = 0;
+const lines = [];
+const check = (label, ok, detail = '') => {
+  if (!ok) failures++;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `\n        ${detail}` : ''}`);
+};
+
+const handle = (page) => page.evaluate(() => window.__passportClub ?? null);
+
+/** Click the globe at a screen position relative to the stage. */
+async function clickMap(page, [x, y]) {
+  const box = await page.locator('.globe-stage').boundingBox();
+  await page.mouse.click(box.x + x, box.y + y);
+}
+
+/**
+ * Click a real-world coordinate.
+ *
+ * On a globe a place can be round the back, where it has no screen position at
+ * all, so turn the planet to face it first — exactly what a player does by
+ * dragging.
+ */
+async function clickPlace(page, lonLat) {
+  let xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
+  if (!xy) {
+    await page.evaluate((pt) => window.__passportClub.faceTo(pt), lonLat);
+    await page.waitForTimeout(150);
+    xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
+  }
+  if (!xy) return false;
+  await clickMap(page, xy);
+  return true;
+}
+
+/** Drag across the globe, as a finger or mouse would. */
+async function dragGlobe(page, dx, dy) {
+  const box = await page.locator('.globe-stage').boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(cx + (dx * i) / 10, cy + (dy * i) / 10);
+  }
+  await page.mouse.up();
+}
+
+/** Read the question currently on screen. */
+async function currentPrompt(page) {
+  return {
+    name: await page.locator('.prompt-name').textContent(),
+    sub: await page.locator('.prompt-sub').textContent(),
+    round: await page.locator('.stat', { hasText: 'Round' }).locator('.stat-value').textContent(),
+    score: await page.locator('.stat', { hasText: 'Score' }).locator('.stat-value').textContent(),
+  };
+}
+
+async function startGame(page, { mode, scopeLabel, level, rounds }) {
+  await page.goto(`${ORIGIN}/?e2e=1`);
+  await page.locator('.setup').waitFor({ timeout: 20000 });
+
+  await page.locator('.big-card', { hasText: mode }).first().click();
+  if (scopeLabel) {
+    await page.locator('.chip', { hasText: scopeLabel }).first().click();
+  }
+  if (level) {
+    await page.locator('.big-card', { hasText: level }).first().click();
+  }
+  if (rounds) {
+    await page.locator('.chip.small', { hasText: new RegExp(`^${rounds}$`) }).click();
+  }
+  await page.locator('.start-button').click();
+  await page.locator('.globe-stage').waitFor({ timeout: 30000 });
+  await page.locator('.prompt-name').waitFor({ timeout: 15000 });
+  // Wait for the globe to have a camera before asking it to project anything.
+  await page.waitForFunction(() => window.__passportClub?.camera != null);
+}
+
+/* ------------------------------------------------------------------ main */
+
+await waitForServer();
+const browser = await chromium.launch({ headless: true, executablePath: findChrome() });
+const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+const page = await context.newPage();
+
+const consoleErrors = [];
+page.on('console', (m) => {
+  if (m.type() === 'error') consoleErrors.push(m.text());
+});
+page.on('pageerror', (e) => consoleErrors.push(String(e)));
+
+try {
+  /* --- 1. every mode is playable, and correct clicks are accepted --- */
+
+  const modes = [
+    { label: 'Continents', mode: 'Continents', rounds: null, expect: 7 },
+    { label: 'Countries (Europe)', mode: 'Countries', scopeLabel: 'Europe', level: 'Explorer', rounds: 5 },
+    { label: 'States & Counties (USA)', mode: 'States & Counties', level: 'Explorer', rounds: 5 },
+    { label: 'Cities (world)', mode: 'Cities', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 },
+  ];
+
+  for (const m of modes) {
+    await startGame(page, m);
+
+    const seen = [];
+    let solved = 0;
+    for (let i = 0; i < (m.expect ?? m.rounds); i++) {
+      const h = await handle(page);
+      if (!h?.target) break;
+      const prompt = await currentPrompt(page);
+      seen.push(prompt.name);
+
+      if (!(await clickPlace(page, h.target.point))) break;
+
+      // A correct answer swaps the dock into its "correct" state.
+      await page
+        .locator('.prompt-dock.status-correct')
+        .waitFor({ timeout: 4000 })
+        .then(() => solved++)
+        .catch(() => {});
+      await page.waitForTimeout(1700); // auto-advance
+    }
+
+    const total = m.expect ?? m.rounds;
+    check(
+      `${m.label.padEnd(24)} all ${total} answers accepted`,
+      solved === total,
+      solved === total ? '' : `solved ${solved}/${total}; saw: ${seen.join(', ')}`,
+    );
+    check(
+      `${m.label.padEnd(24)} questions are all different`,
+      new Set(seen).size === seen.length,
+      seen.join(', '),
+    );
+  }
+
+  /* --- 2. results screen appears with the right tally --- */
+  await page.locator('.results').waitFor({ timeout: 8000 });
+  const found = await page.locator('.figure', { hasText: 'found' }).locator('.figure-value').textContent();
+  check('reaches the results screen with a full score', found === '5/5', `found = ${found}`);
+
+  /* --- 3. a wrong click is rejected, explained, and costs a life --- */
+  await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+  {
+    const h = await handle(page);
+    // Aim at the antipode: guaranteed wrong, wherever the answer is.
+    const anti = [((h.target.point[0] + 360) % 360) - 180, -h.target.point[1]];
+    await clickPlace(page, anti);
+    await page.locator('.feedback.bad').waitFor({ timeout: 4000 });
+    const msg = await page.locator('.feedback.bad').textContent();
+    const pipsLeft = await page.locator('.pip.full').count();
+    check('a wrong guess is rejected with an explanation', msg.length > 8, msg);
+    check('a wrong guess costs one of three lives', pipsLeft === 2, `${pipsLeft} pips left`);
+    check('a miss is marked on the map', (await page.locator('.miss-mark').count()) >= 1);
+  }
+
+  /* --- 4. three misses reveals the answer --- */
+  {
+    const h = await handle(page);
+    const anti = [((h.target.point[0] + 360) % 360) - 180, -h.target.point[1]];
+    for (let i = 0; i < 2; i++) {
+      await clickPlace(page, anti);
+      await page.waitForTimeout(400);
+    }
+    await page.locator('.prompt-dock.status-revealed').waitFor({ timeout: 5000 });
+    check('three misses reveals the answer', true);
+    check('the reveal pins the answer on the map',
+      (await page.locator('.answer-pin').count()) === 1);
+  }
+
+  /* --- 5. the helper toggles reach the map --- */
+  await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+  check('the globe renders to a canvas', (await page.locator('canvas.globe-canvas').count()) === 1);
+
+  await page.goto(`${ORIGIN}/?e2e=1`);
+  await page.locator('.setup').waitFor();
+  await page.locator('.switch', { hasText: 'Draw country borders' }).click();
+  await page.locator('.switch', { hasText: 'Show place names' }).click();
+  await page.locator('.start-button').click();
+  await page.locator('.globe-stage').waitFor();
+  await page.waitForFunction(() => window.__passportClub?.camera != null);
+  await page.waitForTimeout(500);
+  check('place-name labels appear when asked for',
+    (await page.locator('.place-label').count()) > 5,
+    `${await page.locator('.place-label').count()} labels`);
+
+  /* --- 6. the hint circle is created, off-centre, and turned towards --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    const before = await handle(page);
+    await page.locator('.ghost-button', { hasText: 'Hint' }).click();
+    await page.waitForTimeout(1100);
+    const after = await handle(page);
+
+    check('the hint produces a search area', after.hint != null);
+    if (after.hint) {
+      // The circle must not be centred on the answer, or it would give it away.
+      const off = Math.hypot(
+        after.hint.center[0] - before.target.point[0],
+        after.hint.center[1] - before.target.point[1],
+      );
+      check('the hint circle is offset from the answer', off > 0.5, `offset ${off.toFixed(2)} deg`);
+      // ... and the globe must turn to show it, or it is no help at all.
+      const facing = Math.hypot(
+        after.camera.center[0] - after.hint.center[0],
+        after.camera.center[1] - after.hint.center[1],
+      );
+      check('the globe turns to show the hint', facing < 5,
+        `camera ${after.camera.center.map((n) => n.toFixed(1))} vs hint ${after.hint.center.map((n) => n.toFixed(1))}`);
+    }
+  }
+
+  /* --- 7. zoom controls work and don't break clicking --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Europe', level: 'Explorer', rounds: 5 });
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.waitForTimeout(400);
+    const h = await handle(page);
+    const clicked = await clickPlace(page, h.target.point);
+    const accepted =
+      clicked &&
+      (await page
+        .locator('.prompt-dock.status-correct')
+        .waitFor({ timeout: 4000 })
+        .then(() => true)
+        .catch(() => false));
+    check('clicks still land correctly after zooming', accepted);
+  }
+
+  /* --- 8. the globe actually spins, and stays the right way up --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    const before = (await handle(page)).camera;
+    await dragGlobe(page, 260, 0);
+    await page.waitForTimeout(200);
+    const after = (await handle(page)).camera;
+
+    const lonMoved = Math.abs(after.center[0] - before.center[0]) > 10;
+    check('dragging sideways spins the globe', lonMoved,
+      `${before.center[0].toFixed(1)} -> ${after.center[0].toFixed(1)}`);
+    check('a sideways drag does not tilt the poles',
+      Math.abs(after.center[1] - before.center[1]) < 1,
+      `lat ${before.center[1].toFixed(1)} -> ${after.center[1].toFixed(1)}`);
+
+    // Dragging far past the pole must stop at it rather than flipping over.
+    await dragGlobe(page, 0, -1200);
+    await dragGlobe(page, 0, -1200);
+    const polar = (await handle(page)).camera;
+    check('the globe cannot be flipped upside-down',
+      polar.center[1] <= 90 && polar.center[1] >= -90,
+      `lat ${polar.center[1].toFixed(1)}`);
+
+    // A spin must not have knocked the guessing logic out of alignment.
+    const h = await handle(page);
+    const ok = await clickPlace(page, h.target.point);
+    const accepted = ok && (await page.locator('.prompt-dock.status-correct')
+      .waitFor({ timeout: 4000 }).then(() => true).catch(() => false));
+    check('clicks land correctly after spinning', accepted);
+  }
+
+  /* --- 9. zoom controls change the camera --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    const z0 = (await handle(page)).camera.zoom;
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.waitForTimeout(250);
+    const z1 = (await handle(page)).camera.zoom;
+    check('the zoom button moves the camera closer', z1 > z0 * 1.2, `${z0} -> ${z1}`);
+    await page.locator('.map-controls button[aria-label="Reset the view"]').click();
+    await page.waitForTimeout(800);
+    const z2 = (await handle(page)).camera.zoom;
+    check('reset returns to the starting view', Math.abs(z2 - z0) < 0.05, `${z2} vs ${z0}`);
+  }
+
+  /* --- 10. a scoped round starts framed on its region --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Europe', level: 'Explorer', rounds: 5 });
+    const cam = (await handle(page)).camera;
+    check('a Europe round opens looking at Europe',
+      cam.zoom > 1.4 && cam.center[1] > 20 && cam.center[0] > -20 && cam.center[0] < 50,
+      `center ${cam.center.map((n) => n.toFixed(1)).join(', ')} zoom ${cam.zoom.toFixed(2)}`);
+  }
+
+  check('no console errors during play', consoleErrors.length === 0,
+    consoleErrors.slice(0, 3).join(' | '));
+} catch (err) {
+  check('suite ran to completion', false, String(err).split('\n')[0]);
+} finally {
+  await browser.close();
+  stopServer();
+}
+
+console.log('\n' + lines.join('\n'));
+console.log(failures ? `\n${failures} check(s) failed.\n` : '\nAll browser checks passed.\n');
+process.exit(failures ? 1 : 0);
