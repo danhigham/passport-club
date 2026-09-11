@@ -234,8 +234,15 @@ try {
     }
     await page.locator('.prompt-dock.status-revealed').waitFor({ timeout: 5000 });
     check('three misses reveals the answer', true);
-    check('the reveal pins the answer on the map',
-      (await page.locator('.answer-pin').count()) === 1);
+
+    // The pin cannot appear until the globe has turned far enough to bring the
+    // answer into view, so wait for the flight rather than racing it.
+    const pinned = await page
+      .locator('.answer-pin')
+      .waitFor({ timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    check('the reveal pins the answer on the map', pinned);
   }
 
   /* --- 5. the helper toggles reach the map --- */
