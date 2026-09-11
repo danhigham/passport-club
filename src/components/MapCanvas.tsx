@@ -18,6 +18,7 @@ import {
   type Globe,
 } from '../map/geo';
 import { renderGlobe, renderStats, resetRenderStats, type Scene } from '../map/render';
+import { createRasterGlobe, loadEarthTextures, type RasterGlobe } from '../map/rasterGlobe';
 import { useGlobeControls } from '../map/useGlobeControls';
 import type { Session } from '../game/session';
 import { isArmed, type JudgeInput, type RoundState } from '../game/useGame';
@@ -124,6 +125,27 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
   const camera = controls.camera;
   liveRef.current = { globe, round, camera, animating: controls.isAnimating };
 
+  /*
+   * The satellite layer. Created once and kept for the life of the component:
+   * a WebGL context is expensive to build and browsers cap how many may exist.
+   * It renders to its own offscreen canvas, which the 2D layer composites, so
+   * the drawing order stays in one place.
+   */
+  const rasterRef = useRef<RasterGlobe | null>(null);
+  const [textureVersion, setTextureVersion] = useState(0);
+  if (rasterRef.current === null && typeof document !== 'undefined') {
+    rasterRef.current = createRasterGlobe();
+  }
+  useEffect(() => {
+    const raster = rasterRef.current;
+    if (!raster) return;
+    loadEarthTextures(import.meta.env.BASE_URL, (image) => {
+      raster.setTexture(image);
+      setTextureVersion((v) => v + 1); // repaint with whatever just arrived
+    });
+    return () => raster.destroy();
+  }, []);
+
   const [hasSpun, setHasSpun] = useState(false);
   useEffect(() => {
     if (controls.isSpinning) setHasSpun(true);
@@ -224,6 +246,10 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
     const moving = controls.isSpinning || controls.isAnimating;
     const detailed = !moving && camera.zoom >= DETAIL_ZOOM;
 
+    const raster = rasterRef.current;
+    const satellite = config.basemap === 'satellite' && !!raster?.ready;
+    if (satellite) raster!.render(globe, camera, dpr);
+
     const scene: Scene = {
       countries: detailed ? session.countries : session.countriesCoarse,
       areas: detailed ? session.areas : session.areasCoarse,
@@ -239,6 +265,7 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
       parent: parentShape,
       hint: revealed ? null : (hint?.shape ?? null),
       answer: answerShape,
+      raster: satellite ? raster!.canvas : null,
     };
     renderGlobe(ctx, globe, camera, scene);
   }, [
@@ -253,6 +280,8 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
     config.showBorders,
     config.mode,
     config.scope,
+    config.basemap,
+    textureVersion,
     hoverId,
     parentShape,
     hint,
@@ -351,6 +380,11 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
       /** Turn the globe to face a place, so a test can click it. */
       faceTo: (lonLat: [number, number]) =>
         globe && controls.snapTo({ center: lonLat, zoom: camera.zoom }),
+      setCamera: (center: [number, number], zoom: number) =>
+        globe && controls.snapTo({ center, zoom }),
+      /** Screen pixel -> [lon, lat], for checking the raster layer's geometry. */
+      unproject: (x: number, y: number) =>
+        globe ? screenToLonLat(globe, camera, x, y) : null,
     };
   }, [target, round, camera, project, globe, controls, hint]);
 

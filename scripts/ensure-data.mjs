@@ -22,8 +22,30 @@ const REQUIRED = [
   'public/data/admin1/index.json',
 ];
 
+/**
+ * The satellite base map is optional, so a missing texture is a warning rather
+ * than a failure: without it the game falls back to the vector globe, which is
+ * exactly what it did before the hybrid map existed.
+ */
+function ensureTextures() {
+  if (existsSync(path.join(ROOT, 'public/textures/earth-4096.jpg'))) return;
+  const res = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'build-texture.mjs')], {
+    stdio: 'inherit',
+    cwd: ROOT,
+  });
+  if (res.status !== 0) {
+    console.warn(
+      '\nCould not build the globe texture (it needs ImageMagick).\n' +
+        'The satellite base map will be unavailable; the vector globe still works.\n',
+    );
+  }
+}
+
 const missing = REQUIRED.filter((f) => !existsSync(path.join(ROOT, f)));
-if (!missing.length) process.exit(0);
+if (!missing.length) {
+  ensureTextures();
+  process.exit(0);
+}
 
 console.log('\nMap data is missing — building it now (one-off, a minute or two).\n');
 
@@ -39,3 +61,5 @@ if (res.status !== 0) {
   );
   process.exit(1);
 }
+
+ensureTextures();

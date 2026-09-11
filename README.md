@@ -135,6 +135,53 @@ The build does more than repackage:
 - **Continent viewpoints are hand-set**, because Natural Earth files all of
   Russia under Europe — so the true centroid of "Europe" lands in central Siberia.
 
+### The hybrid base map (experimental)
+
+> This lives on the `hybrid-map` branch.
+
+A switch in the setup screen swaps the painted globe for a photograph of the
+Earth, with the vector data reduced to an overlay: borders, and — the point of
+the thing — the outline of whatever is under the cursor.
+
+The reasoning is that the two map styles fail in opposite directions. Satellite
+imagery shows a child what a place actually *looks* like, but gives no clue
+where one country stops and the next begins. Vector cartography shows the
+boundaries perfectly and nothing else. Highlighting the shape under the pointer
+puts the boundary back exactly where it is being looked at, and only there.
+
+**How the imagery works.** NASA's Blue Marble composite (public domain), one
+equirectangular image, wrapped onto the globe by a fragment shader: about forty
+lines of GLSL over a single full-screen quad. There is no tile server, no mesh
+and no scene graph, because the projection is fixed — every pixel of the disc is
+one point on the sphere, so the shader goes straight from pixel to latitude and
+longitude and samples the photograph. Two sizes ship; the 80kb one appears
+immediately and the 1mb one replaces it when it arrives.
+
+**The hard part is agreement.** The imagery is projected by the shader and the
+overlay by d3 — two independent implementations of the same projection. Disagree
+by a few pixels and the outlines visibly slide off their coastlines. So the
+shader is not "an orthographic projection", it is a transcription of *d3's*, and
+`npm run align` measures the result rather than trusting it: for a grid of
+pixels it asks whether the photograph looks like land there and whether d3 says
+a polygon covers it, then nudges the comparison a few pixels in each direction
+and confirms the best match is dead centre.
+
+```
+PASS  Europe / Africa    best offset (0, -1)px, mismatch 9.2% vs 9.4% centred
+PASS  the Americas       best offset (-1, -1)px, mismatch 10.6% vs 10.6% centred
+PASS  Asia / Australia    best offset (0, 0)px, mismatch 13.6% vs 13.6% centred
+```
+
+The residual ~10% is coastline fuzz, islands and December snow — what matters is
+that shifting the comparison does not improve it.
+
+**Cost.** 24ms per frame at the world view against 7ms for the vector globe, but
+that figure is from software rendering (SwiftShader in headless Chromium) and
+should fall a long way on a real GPU. Zoomed in it is already a wash — 10.3ms
+against 10.5ms — because the vector layer stops filling shapes when the
+photograph is doing that job. WebGL2 is required; where it is missing the
+satellite option quietly does nothing and the vector globe carries on.
+
 ### Making a vector globe fast
 
 MapTap sidesteps this problem by texturing a sphere with satellite raster tiles:

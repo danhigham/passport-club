@@ -229,6 +229,12 @@ export function SetupScreen({ core, config, onChange, onStart }: Props) {
         </h2>
         <div className="switch-list">
           <Switch
+            label="Use satellite photos"
+            hint="Shows the real Earth from space. Whatever you point at lights up, so you can still see the borders."
+            checked={config.basemap === 'satellite'}
+            onChange={(v) => onChange({ basemap: v ? 'satellite' : 'vector' })}
+          />
+          <Switch
             label={
               config.mode === 'continent'
                 ? 'Colour the continents'

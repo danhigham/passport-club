@@ -29,8 +29,24 @@ function findChrome() {
 }
 
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'],
-  { cwd: ROOT, stdio: 'ignore' });
-process.on('exit', () => server.kill('SIGTERM'));
+  { cwd: ROOT, stdio: 'ignore', detached: true });
+/**
+ * Shut the preview server down on every exit path.
+ *
+ * `exit` alone is not enough: it does not fire when the process is killed or
+ * when a harness times out, and each of those leaked a server holding its port
+ * until the machine was cleaned up by hand.
+ */
+function stopServer() {
+  if (server.killed) return;
+  try { process.kill(-server.pid, 'SIGTERM'); } catch { try { server.kill('SIGTERM'); } catch {} }
+}
+for (const signal of ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException']) {
+  process.on(signal, (err) => {
+    stopServer();
+    if (signal === 'uncaughtException') { console.error(err); process.exit(1); }
+  });
+}
 for (let i = 0; i < 80; i++) {
   try { if ((await fetch(ORIGIN)).ok) break; } catch {}
   await new Promise((r) => setTimeout(r, 250));
@@ -39,11 +55,12 @@ for (let i = 0; i < 80; i++) {
 const browser = await chromium.launch({ headless: true, executablePath: findChrome() });
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
 
-async function start(mode, scope) {
+async function start(mode, scope, satellite = false) {
   await page.goto(`${ORIGIN}/?e2e=1`);
   await page.locator('.setup').waitFor();
   await page.locator('.big-card', { hasText: mode }).first().click();
   if (scope) await page.locator(scope.sel, { hasText: scope.text }).first().click();
+  if (satellite) await page.locator('.switch', { hasText: 'Use satellite photos' }).click();
   await page.locator('.start-button').click();
   await page.locator('.globe-stage').waitFor();
   await page.waitForFunction(() => window.__passportClub?.camera != null);
@@ -99,6 +116,8 @@ const scenarios = [
   ['Continents (tinted)', () => start('Continents', null)],
   ['Counties, UK',        () => start('States & Counties', { sel: '.chip.tall', text: 'United Kingdom' })],
   ['States, USA',         () => start('States & Counties', { sel: '.chip.tall', text: 'United States' })],
+  ['Satellite, world',    async () => { await start('Countries', { sel: '.chip', text: 'Whole world' }, true); await page.waitForTimeout(2500); }],
+  ['Satellite, Europe',   async () => { await start('Countries', { sel: '.chip', text: 'Europe' }, true); await page.waitForTimeout(2500); }],
 ];
 
 console.log('\nscenario                 paint mean   p50    p95    max     fps');
@@ -120,4 +139,4 @@ for (const [name, go] of [scenarios[0], scenarios[4]]) {
 }
 console.log();
 await browser.close();
-server.kill('SIGTERM');
+stopServer();

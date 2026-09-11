@@ -47,10 +47,25 @@ function findChrome() {
 const server = spawn(
   'npx',
   ['vite', 'preview', '--port', String(PORT), '--strictPort'],
-  { cwd: ROOT, stdio: 'ignore' },
+  { cwd: ROOT, stdio: 'ignore', detached: true },
 );
-const stopServer = () => server.kill('SIGTERM');
-process.on('exit', stopServer);
+/**
+ * Shut the preview server down on every exit path.
+ *
+ * `exit` alone is not enough: it does not fire when the process is killed or
+ * when a harness times out, and each of those leaked a server holding its port
+ * until the machine was cleaned up by hand.
+ */
+function stopServer() {
+  if (server.killed) return;
+  try { process.kill(-server.pid, 'SIGTERM'); } catch { try { server.kill('SIGTERM'); } catch {} }
+}
+for (const signal of ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException']) {
+  process.on(signal, (err) => {
+    stopServer();
+    if (signal === 'uncaughtException') { console.error(err); process.exit(1); }
+  });
+}
 
 async function waitForServer(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;

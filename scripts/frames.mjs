@@ -21,9 +21,27 @@ import { spawn } from 'node:child_process';
 import { chromium } from 'playwright-core';
 const PORT = Number(process.env.PORT || 4371), O=`http://localhost:${PORT}`;
 const DEV = process.env.DEV === '1';
-const srv = DEV
-  ? spawn('npx',['vite','--port',String(PORT),'--strictPort'],{stdio:'ignore'})
-  : spawn('npx',['vite','preview','--port',String(PORT),'--strictPort'],{stdio:'ignore'});
+const server = DEV
+  ? spawn('npx',['vite','--port',String(PORT),'--strictPort'],{stdio:'ignore', detached:true})
+  : spawn('npx',['vite','preview','--port',String(PORT),'--strictPort'],{stdio:'ignore', detached:true});
+
+/**
+ * Shut the preview server down on every exit path.
+ *
+ * `exit` alone is not enough: it does not fire when the process is killed or
+ * when a harness times out, and each of those leaked a server holding its port.
+ */
+function stopServer() {
+  if (server.killed) return;
+  try { process.kill(-server.pid, 'SIGTERM'); } catch { try { server.kill('SIGTERM'); } catch {} }
+}
+for (const signal of ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException']) {
+  process.on(signal, (err) => {
+    stopServer();
+    if (signal === 'uncaughtException') { console.error(err); process.exit(1); }
+  });
+}
+
 for(let i=0;i<100;i++){try{if((await fetch(O)).ok)break;}catch{} await new Promise(r=>setTimeout(r,250));}
 const b=await chromium.launch({headless:true, executablePath:process.env.HOME+'/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome'});
 const p=await (await b.newContext({viewport:{width:1280,height:900}})).newPage();
@@ -110,6 +128,6 @@ for (const [mode, sel, text] of modes) {
 }
 console.log(`\nTOTAL ${totalFrames} frames, ${allBad.length} bad`);
 for (const x of allBad.slice(0,8)) console.log('  ', JSON.stringify(x));
-await b.close(); srv.kill('SIGTERM');
+await b.close(); stopServer();
 console.log(allBad.length ? '\nFRAME INTEGRITY FAILED\n' : '\nAll frames intact.\n');
 process.exit(allBad.length ? 1 : 0);

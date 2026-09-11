@@ -72,6 +72,14 @@ export interface Scene {
   hint: GeoPermissibleObjects | null;
   /** Green reveal shape, once the round is over. */
   answer: GeoPermissibleObjects | null;
+  /**
+   * The satellite layer, already rendered, or null for the vector base map.
+   *
+   * Composited in place of the painted ocean and land. When present the vector
+   * layer stops filling shapes and becomes purely an overlay: borders, and the
+   * outline of whatever the cursor is over.
+   */
+  raster: CanvasImageSource | null;
 }
 
 /**
@@ -213,13 +221,22 @@ export function renderGlobe(
     cy,
     r * 1.05,
   );
-  sea.addColorStop(0, PALETTE.oceanLit);
-  sea.addColorStop(1, PALETTE.oceanDark);
-  ctx.fillStyle = sea;
-  ctx.fill(spherePath);
+  if (scene.raster) {
+    // The photograph already carries land, sea and cloud; clip it to the disc
+    // so the feathered edge of the sphere is the one the shader drew.
+    ctx.save();
+    ctx.clip(spherePath);
+    ctx.drawImage(scene.raster, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    sea.addColorStop(0, PALETTE.oceanLit);
+    sea.addColorStop(1, PALETTE.oceanDark);
+    ctx.fillStyle = sea;
+    ctx.fill(spherePath);
+  }
 
   /* --- graticule --- */
-  ctx.strokeStyle = PALETTE.graticule;
+  ctx.strokeStyle = scene.raster ? 'rgba(255,255,255,0.10)' : PALETTE.graticule;
   ctx.lineWidth = 0.6;
   ctx.beginPath();
   path(GRATICULE);
@@ -247,6 +264,28 @@ export function renderGlobe(
     ctx.strokeStyle = 'rgba(255,255,255,0.4)';
     ctx.lineWidth = 0.5;
     ctx.stroke(outlines);
+  } else if (scene.raster) {
+    /*
+     * Over the photograph there is no land to fill -- the imagery is the map.
+     * The vector data becomes an overlay: borders if the player asked for them,
+     * and, below, the shape under the cursor. That is the whole point of the
+     * hybrid. Satellite imagery shows a child what a place *looks* like but
+     * gives no clue where one country stops and the next starts; the vectors
+     * supply exactly that, and only where they are being looked at.
+     */
+    if (scene.showBorders) {
+      const borders = buildPath(
+        projection,
+        scene.hostId
+          ? scene.countries.filter((f) => f.properties.id !== scene.hostId)
+          : scene.countries,
+        camera,
+        horizon,
+      );
+      ctx.strokeStyle = 'rgba(255,244,214,0.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke(borders);
+    }
   } else {
     const land = buildPath(projection, scene.countries, camera, horizon);
     ctx.fillStyle = PALETTE.land;
@@ -273,24 +312,36 @@ export function renderGlobe(
   /* --- states / provinces / counties --- */
   if (scene.areas.length) {
     const areas = buildPath(projection, scene.areas, camera, horizon);
-    ctx.fillStyle = PALETTE.land;
-    ctx.fill(areas);
-
+    if (!scene.raster) {
+      ctx.fillStyle = PALETTE.land;
+      ctx.fill(areas);
+    }
     if (scene.showBorders) {
-      ctx.strokeStyle = PALETTE.admin1Edge;
+      ctx.strokeStyle = scene.raster ? 'rgba(255,244,214,0.5)' : PALETTE.admin1Edge;
       ctx.lineWidth = 0.85;
       ctx.stroke(areas);
     }
   }
 
-  /* --- hover --- */
+  /* --- whatever the cursor is over --- */
   if (scene.hoverId) {
     const pool = (scene.areas.length ? scene.areas : scene.countries).filter(
       (f) => f.properties.id === scene.hoverId,
     );
     if (pool.length) {
-      ctx.fillStyle = PALETTE.landHover;
-      ctx.fill(buildPath(projection, pool, camera, horizon));
+      const shape = buildPath(projection, pool, camera, horizon);
+      if (scene.raster) {
+        // Tint rather than cover: the player should still see the terrain they
+        // are pointing at, with its extent made unambiguous.
+        ctx.fillStyle = 'rgba(255,214,102,0.38)';
+        ctx.fill(shape);
+        ctx.strokeStyle = 'rgba(255,236,180,0.95)';
+        ctx.lineWidth = 1.8;
+        ctx.stroke(shape);
+      } else {
+        ctx.fillStyle = PALETTE.landHover;
+        ctx.fill(shape);
+      }
     }
   }
 

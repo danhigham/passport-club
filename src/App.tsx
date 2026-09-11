@@ -11,6 +11,7 @@ const STORAGE_KEY = 'passport-club/config/v1';
 
 const DEFAULT_CONFIG: GameConfig = {
   mode: 'continent',
+  basemap: 'vector',
   scope: { type: 'world' },
   level: 'explorer',
   showBorders: true,

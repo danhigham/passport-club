@@ -13,7 +13,9 @@
     "verify": "tsc -b --noEmit && node scripts/check-data.mjs && node scripts/smoke.mjs",
     "e2e": "node scripts/e2e.mjs",
     "bench": "node scripts/bench.mjs",
-    "frames": "node scripts/frames.mjs"
+    "frames": "node scripts/frames.mjs",
+    "texture": "node scripts/build-texture.mjs",
+    "align": "node scripts/align.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

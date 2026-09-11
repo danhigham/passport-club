@@ -96,8 +96,18 @@ export type Scope =
 
 export type Level = 'explorer' | 'traveller' | 'globetrotter';
 
+/**
+ * Which base layer the globe is drawn on.
+ *
+ * 'vector' is the painted cartographic globe. 'satellite' is a photograph of
+ * the Earth with the vector data reduced to an overlay -- borders, and the
+ * outline of whatever is under the cursor.
+ */
+export type Basemap = 'vector' | 'satellite';
+
 export interface GameConfig {
   mode: Mode;
+  basemap: Basemap;
   scope: Scope;
   level: Level;
   /** Draw the dividing lines between countries / states. */
