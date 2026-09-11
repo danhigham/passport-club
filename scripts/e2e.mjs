@@ -91,6 +91,12 @@ async function clickMap(page, [x, y]) {
  * dragging.
  */
 async function clickPlace(page, lonLat) {
+  // A fresh round ignores input briefly, so a mistimed tap can't be spent on
+  // it. A human is always past that by the time they've read the question; the
+  // test is not, so wait for the same thing they would.
+  await page.waitForFunction(() => window.__passportClub?.armed?.() === true, null, {
+    timeout: 5000,
+  });
   let xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
   if (!xy) {
     await page.evaluate((pt) => window.__passportClub.faceTo(pt), lonLat);
@@ -357,6 +363,59 @@ try {
     check('a Europe round opens looking at Europe',
       cam.zoom > 1.4 && cam.center[1] > 20 && cam.center[0] > -20 && cam.center[0] < 50,
       `center ${cam.center.map((n) => n.toFixed(1)).join(', ')} zoom ${cam.zoom.toFixed(2)}`);
+  }
+
+  /* --- 11. a correct answer must not offer a button that vanishes --- */
+  {
+    await startGame(page, { mode: 'Continents', rounds: null, expect: 7 });
+    const h = await handle(page);
+    await clickPlace(page, h.target.point);
+    await page.locator('.prompt-dock.status-correct').waitFor({ timeout: 4000 });
+
+    // The round is about to advance on its own. Anything clickable here is a
+    // target that disappears mid-reach, handing the press to whatever replaces
+    // it — which used to be "Show me", instantly revealing the next answer.
+    const buttons = await page.locator('.prompt-card button').count();
+    check('a correct answer shows no button while it auto-advances', buttons === 0,
+      `${buttons} button(s) in the prompt card`);
+    check('a correct answer shows its progress instead',
+      (await page.locator('.advancing .advance-fill').count()) === 1);
+
+    // And the reproduction: aim where the old button was, press as the round
+    // turns over, and confirm the new question is untouched.
+    const box = await page.locator('.prompt-card').boundingBox();
+    const aim = { x: box.x + box.width - 70, y: box.y + box.height / 2 };
+    await page.waitForTimeout(1400); // land the click right on the changeover
+    await page.mouse.click(aim.x, aim.y);
+    await page.waitForTimeout(500);
+
+    const after = await handle(page);
+    check('a mistimed press cannot skip or reveal the next question',
+      after.status === 'guessing' && after.guesses.length === 0,
+      `status ${after.status}, ${after.guesses.length} guess(es)`);
+  }
+
+  /* --- 12. a wrong answer still waits for the player --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    const h = await handle(page);
+    const anti = [((h.target.point[0] + 360) % 360) - 180, -h.target.point[1]];
+    for (let i = 0; i < 3; i++) {
+      await clickPlace(page, anti);
+      await page.waitForTimeout(350);
+    }
+    await page.locator('.prompt-dock.status-revealed').waitFor({ timeout: 5000 });
+    await page.waitForTimeout(2500); // longer than the auto-advance delay
+
+    check('a revealed answer waits rather than advancing itself',
+      (await page.locator('.prompt-dock.status-revealed').count()) === 1);
+    check('a revealed answer keeps its Next button',
+      (await page.locator('.next-button').count()) === 1);
+
+    await page.locator('.next-button').click();
+    await page.waitForTimeout(400);
+    check('Next moves on when the player is ready',
+      (await handle(page)).status === 'guessing');
   }
 
   check('no console errors during play', consoleErrors.length === 0,

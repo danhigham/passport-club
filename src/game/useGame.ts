@@ -9,6 +9,27 @@ import {
 } from './feedback';
 import type { Session } from './session';
 
+/**
+ * How long a correct answer is celebrated before the game moves itself on.
+ * Exported so the on-screen progress bar can stay honest about it.
+ */
+export const AUTO_ADVANCE_MS = 1500;
+
+/**
+ * A new round ignores input for this long.
+ *
+ * Rounds can advance on their own, which means a tap can be in flight when the
+ * question underneath it changes. Without this guard that tap lands on the new
+ * round — as a wasted guess on the map, or worse, on whatever button has just
+ * appeared where the player was aiming.
+ */
+export const ROUND_ARM_MS = 320;
+
+/** Has this round been on screen long enough to accept input? */
+export function isArmed(round: { startedAt: number } | null): boolean {
+  return !!round && Date.now() - round.startedAt >= ROUND_ARM_MS;
+}
+
 /** Points for solving a round, by how many wrong guesses came first. */
 const POINTS_BY_ATTEMPT = [100, 70, 40];
 const MAX_ATTEMPTS = 3;
@@ -202,7 +223,11 @@ export function useGame(
           return next;
         });
         // A correct answer gets a beat to celebrate, then moves on by itself.
-        advanceTimer.current = window.setTimeout(() => setIndex((i) => i + 1), 1500);
+        // Nothing clickable is shown during that beat — see GameScreen.
+        advanceTimer.current = window.setTimeout(
+          () => setIndex((i) => i + 1),
+          AUTO_ADVANCE_MS,
+        );
       } else {
         setStreak(0);
       }

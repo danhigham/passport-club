@@ -20,7 +20,7 @@ import {
 import { renderGlobe, type Scene } from '../map/render';
 import { useGlobeControls } from '../map/useGlobeControls';
 import type { Session } from '../game/session';
-import type { JudgeInput, RoundState } from '../game/useGame';
+import { isArmed, type JudgeInput, type RoundState } from '../game/useGame';
 import type { AreaFeature, City } from '../types';
 import { useElementSize } from '../hooks/useElementSize';
 
@@ -72,6 +72,10 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
     (x: number, y: number) => {
       const { globe: g, round: r, camera } = liveRef.current;
       if (!g || !r || r.status !== 'guessing') return;
+      // Rounds advance on their own after a correct answer, so a tap aimed at
+      // the old question can arrive just after the new one appears. Don't spend
+      // one of the player's three guesses on it.
+      if (!isArmed(r)) return;
       const lonLat = screenToLonLat(g, camera, x, y);
       // A tap that misses the globe entirely (out in space) isn't a guess.
       if (!lonLat) return;
@@ -305,6 +309,8 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
     (window as unknown as Record<string, unknown>).__passportClub = {
       target: target && { id: target.id, name: target.name, point: target.point },
       status: round?.status ?? null,
+      /** Live, because arming is a matter of elapsed time, not render state. */
+      armed: () => isArmed(round),
       guesses: round?.guesses.map((g) => ({ at: g.at, verdict: g.verdict })) ?? [],
       hint: hint && { center: hint.center },
       camera,

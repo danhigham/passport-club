@@ -889,6 +889,52 @@ h3 {
   background: transparent;
 }
 
+/* Shown instead of a button while a correct answer advances on its own. */
+.advancing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  padding: 6px 2px;
+}
+
+.advancing-label {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mint-deep);
+  white-space: nowrap;
+}
+
+.advance-track {
+  width: 128px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(31, 154, 103, 0.18);
+  overflow: hidden;
+}
+
+.advance-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--mint) 0%, var(--mint-deep) 100%);
+  transform-origin: left center;
+  animation-name: advance;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes advance {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 .next-button {
   padding: 14px 30px;
   font-family: var(--font-display);

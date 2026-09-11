@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { CoreData } from '../data/datasets';
 import { MODE_INFO } from '../game/session';
 import type { Session } from '../game/session';
-import type { GameApi } from '../game/useGame';
+import { AUTO_ADVANCE_MS, isArmed, type GameApi } from '../game/useGame';
 import { MapCanvas } from './MapCanvas';
 
 interface Props {
@@ -28,6 +28,17 @@ export function GameScreen({ session, core, game, onQuit }: Props) {
   const { target, status, guesses, message, secondsLeft, hintUsed } = round;
   const attemptsLeft = Math.max(0, 3 - guesses.length);
   const timerLow = secondsLeft !== null && secondsLeft <= 5;
+  const isLast = round.index + 1 >= game.total;
+
+  /*
+   * Swallow taps that arrive in the first instants of a round. A correct answer
+   * advances the game by itself, so a player reaching for a button can easily
+   * still be moving when the next question replaces it.
+   */
+  const guard = (fn: () => void) => () => {
+    if (!isArmed(round)) return;
+    fn();
+  };
 
   return (
     <div className="game">
@@ -77,19 +88,41 @@ export function GameScreen({ session, core, game, onQuit }: Props) {
                   <button
                     type="button"
                     className="ghost-button"
-                    onClick={game.useHint}
+                    onClick={guard(game.useHint)}
                     disabled={hintUsed}
                   >
                     {hintUsed ? 'Hint shown' : '\u{1F50D} Hint'}
                   </button>
-                  <button type="button" className="ghost-button subtle" onClick={game.skip}>
+                  <button
+                    type="button"
+                    className="ghost-button subtle"
+                    onClick={guard(game.skip)}
+                  >
                     Show me
                   </button>
                 </div>
               </>
+            ) : status === 'correct' ? (
+              /*
+               * Deliberately not a button. A correct answer moves on by itself,
+               * so anything clickable here is a target that vanishes mid-reach,
+               * and the press then lands on whatever takes its place. A progress
+               * bar communicates the same thing without inviting a tap.
+               */
+              <div className="advancing" aria-live="polite">
+                <span className="advancing-label">
+                  {isLast ? 'Finishing up\u2026' : 'Next question\u2026'}
+                </span>
+                <span className="advance-track">
+                  <span
+                    className="advance-fill"
+                    style={{ animationDuration: `${AUTO_ADVANCE_MS}ms` }}
+                  />
+                </span>
+              </div>
             ) : (
-              <button type="button" className="next-button" onClick={game.next}>
-                {round.index + 1 >= game.total ? 'See results' : 'Next'} {'\u2192'}
+              <button type="button" className="next-button" onClick={guard(game.next)}>
+                {isLast ? 'See results' : 'Next'} {'\u2192'}
               </button>
             )}
           </div>
