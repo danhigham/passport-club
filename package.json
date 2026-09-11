@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b --noEmit && vite build",
+    "dev": "node scripts/ensure-data.mjs && vite",
+    "build": "node scripts/ensure-data.mjs && tsc -b --noEmit && vite build",
     "preview": "vite preview",
     "data": "node scripts/build-data.mjs",
     "check": "node scripts/check-data.mjs",
