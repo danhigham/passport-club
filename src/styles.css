@@ -359,6 +359,27 @@ h3 {
 
 /* --- switches --- */
 
+/* Base-map chooser: a choice between two map styles, not a helper toggle. */
+.style-choice {
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 2px dashed var(--paper-edge);
+}
+
+.style-label {
+  display: block;
+  font-weight: 700;
+  font-size: 15.5px;
+  margin-bottom: 9px;
+}
+
+.style-hint {
+  margin: 9px 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
 .switch-list {
   display: flex;
   flex-direction: column;

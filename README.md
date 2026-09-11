@@ -139,9 +139,14 @@ The build does more than repackage:
 
 > This lives on the `hybrid-map` branch.
 
-A switch in the setup screen swaps the painted globe for a photograph of the
-Earth, with the vector data reduced to an overlay: borders, and — the point of
-the thing — the outline of whatever is under the cursor.
+A **Map style** choice in the setup screen — *Drawn map* or *Satellite photos* —
+swaps the painted globe for a photograph of the Earth, with the vector data
+reduced to an overlay: borders, and — the point of the thing — the outline of
+whatever is under the cursor.
+
+It began life as a toggle among the helpers and nobody found it. Someone looking
+for map layers does not go hunting in a list that starts with “show place
+names”, so it is now a pair of labelled options at the top of that panel.
 
 The reasoning is that the two map styles fail in opposite directions. Satellite
 imagery shows a child what a place actually *looks* like, but gives no clue

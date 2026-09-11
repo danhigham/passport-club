@@ -60,7 +60,7 @@ async function start(mode, scope, satellite = false) {
   await page.locator('.setup').waitFor();
   await page.locator('.big-card', { hasText: mode }).first().click();
   if (scope) await page.locator(scope.sel, { hasText: scope.text }).first().click();
-  if (satellite) await page.locator('.switch', { hasText: 'Use satellite photos' }).click();
+  if (satellite) await page.locator('.chip', { hasText: 'Satellite photos' }).click();
   await page.locator('.start-button').click();
   await page.locator('.globe-stage').waitFor();
   await page.waitForFunction(() => window.__passportClub?.camera != null);

@@ -227,13 +227,40 @@ export function SetupScreen({ core, config, onChange, onStart }: Props) {
         <h2>
           <span className="step">{config.mode === 'continent' ? 3 : 4}</span> Helpers
         </h2>
+        {/*
+         * The base map is a choice between two things, not a helper you switch
+         * on. Presented as a toggle among the helpers it was simply not found:
+         * someone looking for map layers does not go hunting in a list that
+         * starts with "show place names".
+         */}
+        <div className="style-choice">
+          <span className="style-label">Map style</span>
+          <div className="chip-grid tight">
+            <button
+              type="button"
+              className={`chip ${config.basemap === 'vector' ? 'selected' : ''}`}
+              onClick={() => onChange({ basemap: 'vector' })}
+              aria-pressed={config.basemap === 'vector'}
+            >
+              <span className="chip-emoji">{'\u{1F5FA}\uFE0F'}</span> Drawn map
+            </button>
+            <button
+              type="button"
+              className={`chip ${config.basemap === 'satellite' ? 'selected' : ''}`}
+              onClick={() => onChange({ basemap: 'satellite' })}
+              aria-pressed={config.basemap === 'satellite'}
+            >
+              <span className="chip-emoji">{'\u{1F6F0}\uFE0F'}</span> Satellite photos
+            </button>
+          </div>
+          <p className="style-hint">
+            {config.basemap === 'satellite'
+              ? 'The real Earth from space. Whatever you point at lights up, so you can still tell where the borders are.'
+              : 'A friendly drawn map, with every country a clear shape.'}
+          </p>
+        </div>
+
         <div className="switch-list">
-          <Switch
-            label="Use satellite photos"
-            hint="Shows the real Earth from space. Whatever you point at lights up, so you can still see the borders."
-            checked={config.basemap === 'satellite'}
-            onChange={(v) => onChange({ basemap: v ? 'satellite' : 'vector' })}
-          />
           <Switch
             label={
               config.mode === 'continent'

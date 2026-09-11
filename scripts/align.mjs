@@ -111,7 +111,7 @@ await page.goto(`${ORIGIN}/?e2e=1`);
 await page.locator('.setup').waitFor();
 await page.locator('.big-card', { hasText: 'Countries' }).first().click();
 await page.locator('.chip', { hasText: 'Whole world' }).first().click();
-await page.locator('.switch', { hasText: 'Use satellite photos' }).click();
+await page.locator('.chip', { hasText: 'Satellite photos' }).click();
 // Borders would bias the colour test towards land along every coast.
 await page.locator('.switch', { hasText: 'Draw country borders' }).click();
 await page.locator('.start-button').click();
