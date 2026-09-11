@@ -205,6 +205,7 @@ scripts/
 ```bash
 npm run verify   # types + data invariants + game logic
 npm run e2e      # plays the game in a headless browser
+npm run frames   # frame-by-frame rendering integrity
 npm run bench    # rendering performance
 ```
 
@@ -226,6 +227,25 @@ the globe if the answer is round the back, and clicking. It checks that wrong
 guesses are rejected and explained, that three misses reveals, that the helper
 switches reach the map, that dragging spins without tilting the poles, and that
 clicks still land correctly after spinning and zooming.
+
+**`frames.mjs`** samples the canvas every frame while playing and flags any
+single-frame lurch in the land-to-ocean balance.
+
+That last one exists because of a bug nothing else could see. d3's clipping is
+spherical: to draw a shape it asks whether that shape contains the centre of the
+view. For a ring collapsed to a point or a line the answer is arbitrary, and
+when it comes back "yes" the clipper concludes the shape covers the whole
+visible hemisphere and fills the entire disc — painting the oceans in the colour
+of the land, for one frame, at a narrow band of camera angles. Simplification
+creates such rings from small islands. Every static check passed: they were
+valid GeoJSON, correctly wound, and enclosed no area worth mentioning. Only
+watching what actually reached the screen found it.
+
+The coarse copies therefore drop not just collapsed rings but slivers — anything
+below roughly a twentieth of a degree, invisible at the zooms they're used for
+and equally unreliable to clip. A shape that loses everything falls back to its
+unsimplified outline rather than vanishing when the globe starts moving; only
+six (Monaco, the Vatican and friends) are too small to draw coarse at all.
 
 The browser suite talks to the app through a handle that is only attached when
 the page is loaded with `?e2e=1`; nothing is exposed in normal use.

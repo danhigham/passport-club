@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { geoArea, geoContains } from 'd3-geo';
+import { geoArea, geoContains, geoOrthographic, geoPath } from 'd3-geo';
 import topojsonClient from 'topojson-client';
 
 const { feature: topoFeature } = topojsonClient;
@@ -22,6 +22,76 @@ const { feature: topoFeature } = topojsonClient;
 /** Decode a packed layer the same way the game does. */
 function decode(topo, layer) {
   return topoFeature(topo, topo.objects[layer]).features;
+}
+
+const ringsOf = (geometry) => {
+  if (!geometry) return [];
+  return geometry.type === 'Polygon'
+    ? geometry.coordinates
+    : geometry.coordinates.flat();
+};
+
+/**
+ * Rings that enclose no area at all: collapsed to a point or a line.
+ *
+ * These are invisible, which is why they survived every other check here, and
+ * they are the reason the oceans occasionally flashed the colour of the land.
+ * d3's clipping is spherical, so it asks whether a ring contains the centre of
+ * the view; for a degenerate ring the answer is arbitrary, and when it comes
+ * back "yes" the clipper decides the shape covers the whole visible hemisphere
+ * and fills the entire disc. Simplification is what creates them — at 15% of
+ * vertices a small island becomes two points — so the coarse copies are where
+ * they turn up.
+ */
+function degenerateRings(features) {
+  const bad = [];
+  for (const f of features) {
+    if (!f.geometry) continue;
+    for (const ring of ringsOf(f.geometry)) {
+      const distinct = new Set(ring.map((p) => `${p[0]},${p[1]}`)).size;
+      let shoelace = 0;
+      for (let i = 0, n = ring.length - 1; i < n; i++) {
+        shoelace += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+      }
+      if (distinct < 3 || Math.abs(shoelace) === 0) {
+        bad.push(`${f.properties.name} (${distinct} distinct pts)`);
+        break;
+      }
+    }
+  }
+  return bad;
+}
+
+/**
+ * Spin the globe past a grid of orientations and check that no single shape
+ * ever paints most of the disc. This is the behavioural counterpart to the
+ * check above: it tests the thing the player actually sees, at the angles where
+ * clipping goes wrong.
+ */
+function swallowsTheView(features, label) {
+  const W = 1280;
+  const H = 700;
+  const scale = Math.min(W, H) / 2 - 10;
+  const disc = Math.PI * scale * scale;
+  const bad = [];
+
+  for (let lon = -180; lon < 180; lon += 15) {
+    for (let lat = -75; lat <= 75; lat += 15) {
+      const projection = geoOrthographic()
+        .translate([W / 2, H / 2])
+        .clipAngle(90)
+        .precision(0.4)
+        .rotate([-lon, -lat, 0])
+        .scale(scale);
+      const generator = geoPath(projection);
+      for (const f of features) {
+        if (generator.area(f) > disc * 0.5) {
+          bad.push(`${f.properties.name} at ${lon},${lat} (${label})`);
+        }
+      }
+    }
+  }
+  return bad;
 }
 
 /**
@@ -56,6 +126,31 @@ const report = (label, bad, total, sample) => {
 /* ---- countries -------------------------------------------------------- */
 
 const countries = decode(read('countries.topo.json'), 'countries');
+const countriesCoarse = decode(read('countries-coarse.topo.json'), 'countries');
+
+{
+  // The two levels must stay index-aligned and carry the same ids; the coarse
+  // copy may legitimately have no geometry for a shape too small to draw there.
+  const mismatched = countries.filter(
+    (f, i) => countriesCoarse[i]?.properties.id !== f.properties.id,
+  );
+  report('coarse countries align with detailed', mismatched.length, countries.length,
+    mismatched.slice(0, 5).map((f) => f.properties.name));
+
+  const dropped = countriesCoarse.filter((f) => !f.geometry);
+  console.log(
+    `      note: ${dropped.length} shape(s) too small to draw coarse` +
+      (dropped.length ? ` (${dropped.map((f) => f.properties.name).slice(0, 6).join(', ')})` : ''),
+  );
+}
+for (const [label, set] of [['countries', countries], ['coarse', countriesCoarse]]) {
+  const bad = degenerateRings(set);
+  report(`no degenerate rings (${label})`, bad.length, set.length, bad);
+}
+for (const [label, set] of [['countries', countries], ['coarse', countriesCoarse]]) {
+  const bad = swallowsTheView(set, label);
+  report(`no shape swallows the view (${label})`, bad.length ? 1 : 0, 1, bad);
+}
 {
   const bad = [];
   for (const f of countries) {
@@ -182,6 +277,26 @@ const index = read('admin1/index.json');
     }
   }
   report('no admin1 region swallows a sibling', bad, total, sample);
+}
+{
+  let bad = 0;
+  let total = 0;
+  const sample = [];
+  for (const entry of index) {
+    for (const suffix of ['', '.coarse']) {
+      const features = decode(
+        read(`admin1/${entry.country}${suffix}.topo.json`),
+        'admin1',
+      );
+      total += features.length;
+      const found = degenerateRings(features);
+      bad += found.length;
+      if (found.length && sample.length < 6) {
+        sample.push(`${found[0]} in ${entry.country}${suffix}`);
+      }
+    }
+  }
+  report('no degenerate rings (admin1, both levels)', bad, total, sample);
 }
 {
   const thin = index.filter((e) => e.count < 2);

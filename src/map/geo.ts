@@ -187,6 +187,15 @@ export function capOf(feature: AreaFeature): Cap {
   const cached = caps.get(feature);
   if (cached) return cached;
 
+  // A coarse feature may have no geometry: shapes too small to draw at that
+  // level are dropped rather than kept as unclippable slivers. Give it an empty
+  // cap so it culls away instead of crashing.
+  if (!feature.geometry) {
+    const empty = { center: feature.properties.point, radius: 0 };
+    caps.set(feature, empty);
+    return empty;
+  }
+
   // Mean of the vertices as unit vectors, normalised back onto the sphere.
   let x = 0;
   let y = 0;

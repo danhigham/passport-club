@@ -121,6 +121,7 @@ function buildPath(
   const path2d = new Path2D();
   const draw = geoPath(projection, path2d as unknown as CanvasRenderingContext2D);
   for (const f of features) {
+    if (!f.geometry) continue; // dropped at this level of detail
     const cap = capOf(f);
     if (geoDistance(camera.center, cap.center) - cap.radius > horizon) continue;
     draw(f as unknown as GeoPermissibleObjects);

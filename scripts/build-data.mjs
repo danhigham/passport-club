@@ -53,6 +53,17 @@ const QUANTIZE_COUNTRY = 1e4;
  * indistinguishable at those sizes.
  */
 const COARSE_KEEP = 0.15;
+
+/**
+ * Smallest ring worth keeping in a coarse copy, as twice its area in square
+ * degrees. Roughly a 0.05-degree box, which at the zoom levels the coarse data
+ * is used for is a fraction of one pixel.
+ *
+ * Simplification does not only flatten rings to nothing, it also leaves slivers
+ * with an area that is tiny but not zero. Those are just as unreliable to clip
+ * as fully degenerate ones and just as invisible, so they go too.
+ */
+const COARSE_MIN_RING = 0.004;
 const QUANTIZE_COARSE = 2e4;
 
 const SOURCES = {
@@ -124,17 +135,51 @@ function cleanRing(ring) {
 
 const HEMISPHERE = 2 * Math.PI;
 
+/** Twice the enclosed area of a ring, by the shoelace formula. */
+function shoelace(ring) {
+  let sum = 0;
+  for (let i = 0, n = ring.length - 1; i < n; i++) {
+    sum += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  }
+  return Math.abs(sum);
+}
+
+/**
+ * Keep only rings that enclose actual area.
+ *
+ * A ring that has collapsed to a point or a line is not merely invisible, it is
+ * dangerous: d3's clipping is spherical, and asking whether a degenerate ring
+ * contains the centre of the view gives an arbitrary answer. When it answers
+ * "yes", the clipper concludes the shape covers the entire visible hemisphere
+ * and emits the whole disc — painting the oceans in the land colour for exactly
+ * as long as the camera stays at that angle, which is usually one frame.
+ *
+ * Simplification is what creates these: at 15% of vertices a small island is
+ * reduced to two points. Quantisation can do it too.
+ */
+function liveRings(rings, minArea = 0) {
+  const out = [];
+  for (const ring of rings) {
+    const cleaned = cleanRing(ring);
+    if (!cleaned) continue;
+    const distinct = new Set(cleaned.map((p) => `${p[0]},${p[1]}`)).size;
+    if (distinct < 3 || shoelace(cleaned) <= minArea) continue;
+    out.push(cleaned);
+  }
+  return out;
+}
+
 /** Tidy a Polygon/MultiPolygon; returns null if nothing survives. */
-function thinGeometry(geom) {
+function thinGeometry(geom, minArea = 0) {
   if (!geom) return null;
 
   if (geom.type === 'Polygon') {
-    const rings = geom.coordinates.map(cleanRing).filter(Boolean);
+    const rings = liveRings(geom.coordinates, minArea);
     return rings.length ? { type: 'Polygon', coordinates: rings } : null;
   }
   if (geom.type === 'MultiPolygon') {
     const polys = geom.coordinates
-      .map((poly) => poly.map(cleanRing).filter(Boolean))
+      .map((poly) => liveRings(poly, minArea))
       .filter((poly) => poly.length > 0);
     if (!polys.length) return null;
     return polys.length === 1
@@ -188,8 +233,25 @@ function coarsenTopology(name, features, keep, quantization) {
   // presimplify leaves a weight on every point; drop it before quantising.
   topo.arcs = topo.arcs.map((arc) => arc.map((p) => [p[0], p[1]]));
   topo = quantize(topo, quantization);
-  orientTopology(topo, name);
-  return topo;
+
+  // Sweep up whatever simplification flattened, then pack again. A shape that
+  // loses every ring falls back to its unsimplified self rather than vanishing:
+  // these are tiny countries that cost a handful of vertices anyway.
+  const decoded = topoFeature(topo, topo.objects[name]).features;
+  const cleaned = decoded.map((f, i) => ({
+    type: 'Feature',
+    properties: features[i].properties,
+    // If simplification left nothing, keep the shape unsimplified rather than
+    // dropping it: a country that vanishes when the globe starts moving is far
+    // more jarring than a handful of extra vertices. Only shapes too small to
+    // survive even untouched — Monaco, the Vatican — genuinely disappear, and
+    // those are a fraction of a pixel at the zooms this copy is used for.
+    geometry:
+      thinGeometry(f.geometry, COARSE_MIN_RING) ??
+      thinGeometry(features[i].geometry, COARSE_MIN_RING),
+  }));
+
+  return packTopology(name, cleaned, quantization, COARSE_MIN_RING).topo;
 }
 
 function orientTopology(topo, name) {
@@ -199,6 +261,8 @@ function orientTopology(topo, name) {
 
   decoded.forEach((f, i) => {
     const geometry = object.geometries[i];
+    // Coarse levels drop shapes too small to draw, leaving no geometry at all.
+    if (!f.geometry) return;
     if (f.geometry.type === 'Polygon') {
       flipped += orientPolygonArcs(f.geometry.coordinates, geometry.arcs);
     } else if (f.geometry.type === 'MultiPolygon') {
@@ -307,14 +371,36 @@ function writeJSON(rel, data) {
  * coordinates that ship, not the ones we started with. Quantisation moves
  * vertices, and a point computed before it can end up outside afterwards.
  */
-function packTopology(name, features, quantization) {
+function packTopology(name, features, quantization, minArea = 0) {
   const topo = quantize(
     topology({ [name]: { type: 'FeatureCollection', features } }),
     quantization,
   );
-  const flipped = orientTopology(topo, name);
-  const decoded = topoFeature(topo, topo.objects[name]).features;
-  return { topo, decoded, flipped };
+  // Quantisation snaps vertices to a grid, which can itself flatten a small
+  // ring to nothing, so degenerate rings are swept up *after* it and the
+  // topology rebuilt from the survivors. The second pass is geometrically a
+  // no-op — the coordinates are already on the grid — so nothing shifts.
+  const firstPass = topoFeature(topo, topo.objects[name]).features;
+  const finalTopo = quantize(
+    topology({
+      [name]: {
+        type: 'FeatureCollection',
+        features: firstPass.map((f, i) => ({
+          type: 'Feature',
+          properties: features[i].properties,
+          // No fallback: a ring too small to survive is too small to see.
+          // Anything that loses all of them is dropped rather than redrawn at
+          // a size that cannot be clipped reliably.
+          geometry: thinGeometry(f.geometry, minArea),
+        })),
+      },
+    }),
+    quantization,
+  );
+
+  const flipped = orientTopology(finalTopo, name);
+  const decoded = topoFeature(finalTopo, finalTopo.objects[name]).features;
+  return { topo: finalTopo, decoded, flipped };
 }
 
 /**
@@ -627,6 +713,7 @@ async function main() {
   const nCoarse = writeJSON('countries-coarse.topo.json', coarseTopo);
   const countPoints = (fc) =>
     fc.reduce((n, f) => {
+      if (!f.geometry) return n;
       const walk = (c) => (typeof c[0] === 'number' ? 1 : c.reduce((m, x) => m + walk(x), 0));
       return n + walk(f.geometry.coordinates);
     }, 0);
