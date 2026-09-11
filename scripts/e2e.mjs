@@ -505,6 +505,77 @@ try {
       `center ${arrived.camera.center.map((n) => n.toFixed(1))} z${arrived.camera.zoom.toFixed(2)}`);
   }
 
+  /* --- 15. empty space is not a guess --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    const box = await page.locator('.globe-stage').boundingBox();
+
+    // The corners of a world view are sky, not planet. Clicking them used to
+    // cost a life each, because d3's invert clamps to the limb instead of
+    // reporting that the point missed the globe entirely.
+    const corners = [
+      [10, 10],
+      [box.width - 10, 10],
+      [10, box.height - 10],
+      [box.width - 10, box.height - 10],
+    ];
+    for (const [cx, cy] of corners) {
+      await page.mouse.click(box.x + cx, box.y + cy);
+      await page.waitForTimeout(120);
+    }
+
+    const h = await handle(page);
+    check('clicking empty space costs nothing',
+      h.guesses.length === 0 && h.status === 'guessing',
+      `${h.guesses.length} guess(es), status ${h.status}`);
+    check('clicking empty space leaves all three lives',
+      (await page.locator('.pip.full').count()) === 3);
+    check('clicking empty space marks nothing on the map',
+      (await page.locator('.miss-mark').count()) === 0);
+
+    // ... but the planet itself still registers.
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(300);
+    check('the globe itself still registers clicks',
+      (await handle(page)).guesses.length === 1);
+  }
+
+  /* --- 16. the reveal ring pulses in place --- */
+  {
+    await startGame(page, { mode: 'Continents', rounds: null, expect: 7 });
+    const h = await handle(page);
+    await clickPlace(page, h.target.point);
+    await page.locator('.answer-pin').waitFor({ timeout: 5000 });
+
+    const box = await page.evaluate(() => {
+      const el = document.querySelector('.answer-pin .pulse');
+      const cs = getComputedStyle(el);
+      return { transformBox: cs.transformBox };
+    });
+    check('the pulse ring is scoped to its own box', box.transformBox === 'fill-box',
+      `transform-box: ${box.transformBox}`);
+
+    // The real check: sample the ring's centre across the animation. It scales,
+    // so the size changes -- but if the origin is wrong it also travels, which
+    // is what made a circle fly diagonally across the screen.
+    const sample = () =>
+      page.evaluate(() => {
+        const r = document.querySelector('.answer-pin .pulse').getBoundingClientRect();
+        return [r.x + r.width / 2, r.y + r.height / 2];
+      });
+    const a = await sample();
+    await page.waitForTimeout(260);
+    const b2 = await sample();
+    await page.waitForTimeout(260);
+    const c = await sample();
+    const drift = Math.max(
+      Math.hypot(b2[0] - a[0], b2[1] - a[1]),
+      Math.hypot(c[0] - a[0], c[1] - a[1]),
+    );
+    check('the pulse ring stays put instead of flying across the screen', drift < 3,
+      `centre drifted ${drift.toFixed(1)}px`);
+  }
+
   check('no console errors during play', consoleErrors.length === 0,
     consoleErrors.slice(0, 3).join(' | '));
 } catch (err) {

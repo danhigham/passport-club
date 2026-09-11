@@ -723,6 +723,12 @@ h3 {
   stroke-width: 3;
   opacity: 0.85;
   animation: ping 1.5s ease-out infinite;
+  /* `transform-box` must be set explicitly. On SVG it defaults to `view-box`,
+     which makes `transform-origin: center` mean the centre of the whole map
+     rather than the centre of this circle — so the ring scaled out from
+     mid-screen and flew diagonally across the globe instead of pulsing in
+     place. `fill-box` scopes the origin to the element's own bounds. */
+  transform-box: fill-box;
   transform-origin: center;
 }
 

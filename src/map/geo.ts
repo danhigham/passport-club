@@ -104,6 +104,22 @@ export function degreesPerPixel(globe: Globe, camera: Camera): number {
   return DEG / (globe.baseScale * camera.zoom);
 }
 
+/**
+ * Is this screen pixel actually on the planet, rather than out in space?
+ *
+ * This has to be asked explicitly, because `projection.invert` will not tell
+ * us. d3's `asin` helper *clamps* its argument to [-1, 1] rather than returning
+ * NaN, so inverting a point beyond the disc silently yields a perfectly
+ * plausible coordinate somewhere on the limb. A click on empty sky therefore
+ * looks exactly like a click on the horizon, and gets judged as a real guess.
+ */
+export function isOnGlobe(globe: Globe, camera: Camera, sx: number, sy: number): boolean {
+  const radius = globe.baseScale * camera.zoom;
+  const dx = sx - globe.width / 2;
+  const dy = sy - globe.height / 2;
+  return dx * dx + dy * dy <= radius * radius;
+}
+
 /** Screen pixel -> [lon, lat], or null if the click missed the globe. */
 export function screenToLonLat(
   globe: Globe,
@@ -111,6 +127,7 @@ export function screenToLonLat(
   sx: number,
   sy: number,
 ): [number, number] | null {
+  if (!isOnGlobe(globe, camera, sx, sy)) return null;
   const projection = applyCamera(globe, camera);
   const inv = projection.invert?.([sx, sy]);
   if (!inv || !Number.isFinite(inv[0]) || !Number.isFinite(inv[1])) return null;
