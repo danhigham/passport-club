@@ -90,19 +90,41 @@ async function clickMap(page, [x, y]) {
  * all, so turn the planet to face it first — exactly what a player does by
  * dragging.
  */
+/** Great-circle separation in degrees. */
+function angularDistance(a, b) {
+  const r = Math.PI / 180;
+  const [lon1, lat1] = [a[0] * r, a[1] * r];
+  const [lon2, lat2] = [b[0] * r, b[1] * r];
+  const h =
+    Math.sin((lat2 - lat1) / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2;
+  return (2 * Math.asin(Math.min(1, Math.sqrt(h)))) / r;
+}
+
 async function clickPlace(page, lonLat) {
   // A fresh round ignores input briefly, so a mistimed tap can't be spent on
   // it. A human is always past that by the time they've read the question; the
   // test is not, so wait for the same thing they would.
-  await page.waitForFunction(() => window.__passportClub?.armed?.() === true, null, {
-    timeout: 5000,
-  });
-  let xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
-  if (!xy) {
+  await page.waitForFunction(
+    () => window.__passportClub?.armed?.() === true && window.__passportClub.animating === false,
+    null,
+    { timeout: 8000 },
+  );
+  const { camera } = await page.evaluate(() => ({ camera: window.__passportClub.camera }));
+
+  // Turn the globe if the target is round the back *or* out near the limb.
+  // Near the edge of the disc a single pixel spans a huge angle, so a click
+  // there lands almost anywhere — a real player would spin it round to face
+  // them first, and so must the test.
+  const needsTurning =
+    angularDistance(camera.center, lonLat) > 50 ||
+    (await page.evaluate((pt) => window.__passportClub.project(pt), lonLat)) === null;
+
+  if (needsTurning) {
     await page.evaluate((pt) => window.__passportClub.faceTo(pt), lonLat);
     await page.waitForTimeout(150);
-    xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
   }
+  const xy = await page.evaluate((pt) => window.__passportClub.project(pt), lonLat);
   if (!xy) return false;
   await clickMap(page, xy);
   return true;
@@ -148,8 +170,12 @@ async function startGame(page, { mode, scopeLabel, level, rounds }) {
   await page.locator('.start-button').click();
   await page.locator('.globe-stage').waitFor({ timeout: 30000 });
   await page.locator('.prompt-name').waitFor({ timeout: 15000 });
-  // Wait for the globe to have a camera before asking it to project anything.
+  // Wait for the globe to have a camera and to have finished its opening
+  // flight before asking it to project anything.
   await page.waitForFunction(() => window.__passportClub?.camera != null);
+  await page.waitForFunction(() => window.__passportClub?.animating === false, null, {
+    timeout: 8000,
+  });
 }
 
 /* ------------------------------------------------------------------ main */
@@ -416,6 +442,67 @@ try {
     await page.waitForTimeout(400);
     check('Next moves on when the player is ready',
       (await handle(page)).status === 'guessing');
+  }
+
+  /* --- 13. the view travels between questions instead of teleporting --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+
+    // Record the round's home view *before* moving, since that is where the
+    // next question is supposed to bring us back to.
+    const home = (await handle(page)).camera;
+
+    // Now zoom somewhere the next round has to travel back from.
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.waitForTimeout(400);
+
+    const h = await handle(page);
+    await clickPlace(page, h.target.point);
+    await page.locator('.prompt-dock.status-correct').waitFor({ timeout: 4000 });
+
+    // The round auto-advances; catch the globe mid-flight.
+    await page.waitForFunction(() => window.__passportClub?.animating === true, null,
+      { timeout: 5000 });
+    check('the view animates between questions rather than snapping', true);
+
+    // Guessing while the globe is still moving would be aiming at a sliding
+    // target, so those taps must not cost the player a life.
+    const box = await page.locator('.globe-stage').boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    await page.waitForFunction(() => window.__passportClub?.animating === false, null,
+      { timeout: 8000 });
+    const settled = await handle(page);
+    check('no guess is spent while the view is in motion',
+      settled.guesses.length === 0, `${settled.guesses.length} guess(es)`);
+    check('the journey ends back at the round\u2019s home view',
+      Math.abs(settled.camera.zoom - home.zoom) < 0.4 &&
+        Math.abs(settled.camera.center[1] - home.center[1]) < 3,
+      `ended ${settled.camera.center.map((n) => n.toFixed(1))} z${settled.camera.zoom.toFixed(2)}`);
+  }
+
+  /* --- 14. a scoped game opens by flying in from the whole planet --- */
+  {
+    await page.goto(`${ORIGIN}/?e2e=1`);
+    await page.locator('.setup').waitFor();
+    await page.locator('.big-card', { hasText: 'Countries' }).first().click();
+    await page.locator('.chip', { hasText: 'Europe' }).first().click();
+    await page.locator('.start-button').click();
+    await page.locator('.globe-stage').waitFor();
+    await page.waitForFunction(() => window.__passportClub?.camera != null);
+
+    const opening = await handle(page);
+    check('a scoped game opens on the whole planet and flies in',
+      opening.animating === true && opening.camera.zoom < 1.5,
+      `zoom ${opening.camera.zoom.toFixed(2)}, animating ${opening.animating}`);
+
+    await page.waitForFunction(() => window.__passportClub?.animating === false, null,
+      { timeout: 8000 });
+    const arrived = await handle(page);
+    check('the opening flight arrives at the scope',
+      arrived.camera.zoom > 1.8 && arrived.camera.center[1] > 30,
+      `center ${arrived.camera.center.map((n) => n.toFixed(1))} z${arrived.camera.zoom.toFixed(2)}`);
   }
 
   check('no console errors during play', consoleErrors.length === 0,

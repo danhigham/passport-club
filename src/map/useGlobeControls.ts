@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  MIN_ZOOM,
   clampCamera,
   degreesPerPixel,
+  worldCamera,
   type Camera,
   type Globe,
 } from './geo';
@@ -23,9 +25,16 @@ import {
 const TAP_SLOP = 7;
 const WHEEL_SENSITIVITY = 0.0022;
 
+/** How long the globe takes to travel back to the round's home view. */
+const REFRAME_MS = 700;
+/** The slower opening shot, flying from the whole planet into the scope. */
+const INTRO_MS = 1000;
+
 export interface GlobeControls {
   camera: Camera;
   isSpinning: boolean;
+  /** True while the camera is flying itself somewhere. */
+  isAnimating: boolean;
   zoomBy: (factor: number) => void;
   reset: () => void;
   /** Glide to another viewpoint (hints, reveals, starting a round). */
@@ -62,6 +71,7 @@ export function useGlobeControls(
 ): GlobeControls {
   const [camera, setCamera] = useState<Camera>(initial);
   const [isSpinning, setSpinning] = useState(false);
+  const [isAnimating, setAnimating] = useState(false);
 
   const elRef = useRef<HTMLElement | null>(null);
   const globeRef = useRef(globe);
@@ -94,6 +104,7 @@ export function useGlobeControls(
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+      setAnimating(false);
     }
   };
 
@@ -122,8 +133,14 @@ export function useGlobeControls(
           // doublings, not a slow crawl then a lurch.
           zoom: from.zoom * (to.zoom / from.zoom) ** e,
         });
-        rafRef.current = p < 1 ? requestAnimationFrame(step) : null;
+        if (p < 1) {
+          rafRef.current = requestAnimationFrame(step);
+        } else {
+          rafRef.current = null;
+          setAnimating(false);
+        }
       };
+      setAnimating(true);
       rafRef.current = requestAnimationFrame(step);
     },
     [apply],
@@ -151,12 +168,34 @@ export function useGlobeControls(
     if (!globe) return;
     const keyChanged = !Object.is(lastKey.current, viewKey);
     if (framed.current && !keyChanged) return;
+    const isFirstFraming = !framed.current;
     framed.current = true;
     lastKey.current = viewKey;
+
+    const home = initialRef.current;
+
+    if (!isFirstFraming) {
+      // Between questions. The camera is usually still parked on the last
+      // answer, so flying home shows the player the journey back out rather
+      // than teleporting them and leaving them to work out where they now are.
+      flyTo(home, REFRAME_MS);
+      return;
+    }
+
     stopAnimation();
-    camRef.current = initialRef.current;
-    setCamera(initialRef.current);
-  }, [viewKey, globe]);
+    if (home.zoom > MIN_ZOOM * 1.15) {
+      // Opening shot for a round confined to one region: start on the whole
+      // planet and fly in, so a child sees *where in the world* they're about
+      // to be playing before the questions start.
+      const world = worldCamera();
+      camRef.current = world;
+      setCamera(world);
+      flyTo(home, INTRO_MS);
+    } else {
+      camRef.current = home;
+      setCamera(home);
+    }
+  }, [viewKey, globe, flyTo]);
 
   useEffect(() => () => stopAnimation(), []);
 
@@ -174,7 +213,10 @@ export function useGlobeControls(
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      stopAnimation();
+      // Deliberately does *not* stop a flight in progress. A finger touching
+      // down is not yet an instruction to take over — it might just be a tap —
+      // and cancelling here would strand the camera halfway home between
+      // questions. Control is seized below, the moment a real drag begins.
       const [x, y] = local(e);
       pointers.current.set(e.pointerId, { x, y });
       el.setPointerCapture(e.pointerId);
@@ -188,6 +230,8 @@ export function useGlobeControls(
           pinchDist: 0,
         };
       } else if (pointers.current.size === 2) {
+        // A second finger is unambiguous: the player wants to pinch.
+        stopAnimation();
         const [a, b] = [...pointers.current.values()];
         gesture.current = {
           startX: x,
@@ -228,6 +272,14 @@ export function useGlobeControls(
       if (!g.moved && Math.hypot(dx, dy) > TAP_SLOP) {
         g.moved = true;
         setSpinning(true);
+        // Now it's a real drag, so take the wheel. Rebase the gesture on where
+        // the camera has actually flown to, otherwise the globe would jump back
+        // to wherever it happened to be when the finger first landed.
+        stopAnimation();
+        g.startCam = camRef.current;
+        g.startX = x;
+        g.startY = y;
+        return;
       }
       if (!g.moved) return;
 
@@ -292,5 +344,5 @@ export function useGlobeControls(
     };
   }, [apply, globe]);
 
-  return { camera, isSpinning, zoomBy, reset, flyTo, snapTo, bind };
+  return { camera, isSpinning, isAnimating, zoomBy, reset, flyTo, snapTo, bind };
 }

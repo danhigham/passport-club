@@ -66,16 +66,19 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
   /* ----------------------------------------------------------- interaction */
 
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const liveRef = useRef({ globe, round, camera: startCamera });
+  const liveRef = useRef({ globe, round, camera: startCamera, animating: false });
 
   const handleTap = useCallback(
     (x: number, y: number) => {
-      const { globe: g, round: r, camera } = liveRef.current;
+      const { globe: g, round: r, camera, animating } = liveRef.current;
       if (!g || !r || r.status !== 'guessing') return;
       // Rounds advance on their own after a correct answer, so a tap aimed at
       // the old question can arrive just after the new one appears. Don't spend
       // one of the player's three guesses on it.
       if (!isArmed(r)) return;
+      // Nor on a guess made while the globe is still flying home: the player
+      // would be aiming at a target sliding out from under their finger.
+      if (animating) return;
       const lonLat = screenToLonLat(g, camera, x, y);
       // A tap that misses the globe entirely (out in space) isn't a guess.
       if (!lonLat) return;
@@ -113,12 +116,12 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
 
   const controls = useGlobeControls(globe, startCamera, viewKey, handleTap, handleHover);
   const camera = controls.camera;
+  liveRef.current = { globe, round, camera, animating: controls.isAnimating };
 
   const [hasSpun, setHasSpun] = useState(false);
   useEffect(() => {
     if (controls.isSpinning) setHasSpun(true);
   }, [controls.isSpinning]);
-  liveRef.current = { globe, round, camera };
 
   /* --------------------------------------------------- what's on the globe */
 
@@ -311,6 +314,7 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
       status: round?.status ?? null,
       /** Live, because arming is a matter of elapsed time, not render state. */
       armed: () => isArmed(round),
+      animating: controls.isAnimating,
       guesses: round?.guesses.map((g) => ({ at: g.at, verdict: g.verdict })) ?? [],
       hint: hint && { center: hint.center },
       camera,
