@@ -67,11 +67,15 @@ function onLandAt(lonLat) {
   return false;
 }
 
-const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
-  cwd: ROOT,
-  stdio: 'ignore',
-  detached: true,
-});
+// DEV=1 runs against the dev server, where React mounts effects twice. That is
+// not a detail: it is where the WebGL layer was found dead on arrival.
+const server = spawn(
+  'npx',
+  process.env.DEV === '1'
+    ? ['vite', '--port', String(PORT), '--strictPort']
+    : ['vite', 'preview', '--port', String(PORT), '--strictPort'],
+  { cwd: ROOT, stdio: 'ignore', detached: true },
+);
 /**
  * Shut the preview server down on every exit path.
  *
@@ -119,6 +123,56 @@ await page.waitForTimeout(2500); // let the full-size texture arrive
 
 let failures = 0;
 const results = [];
+
+/*
+ * Before measuring alignment, check there is anything to align against.
+ *
+ * In satellite mode the vector layer deliberately stops painting land, leaving
+ * the photograph to supply it. If the photograph never arrives, the result is a
+ * bare blue sphere with borders floating on it -- which sails through an
+ * alignment test, because the borders are in exactly the right place. That is
+ * precisely what a dead WebGL context produced, so it needs its own check.
+ */
+{
+  const hues = await page.evaluate(() => {
+    const src = document.querySelector('canvas.globe-canvas');
+    const off = document.createElement('canvas');
+    off.width = 160;
+    off.height = 120;
+    const octx = off.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(src, 0, 0, 160, 120);
+    const d = octx.getImageData(0, 0, 160, 120).data;
+    let earthy = 0;
+    let cream = 0;
+    let total = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i];
+      const g = d[i + 1];
+      const b = d[i + 2];
+      if (r < 12 && g < 25 && b < 45) continue; // space
+      total++;
+      // The painted globe fills land with one flat cream, #f2e3c4. Finding it
+      // here means the vector base map is on screen, whatever was asked for.
+      const isCream =
+        Math.abs(r - 242) < 14 && Math.abs(g - 227) < 14 && Math.abs(b - 196) < 14;
+      if (isCream) cream++;
+      // Greens and browns, which only a photograph produces.
+      else if (g > b + 10) earthy++;
+    }
+    return { earthy, cream, total };
+  });
+  const share = hues.total ? hues.earthy / hues.total : 0;
+  const creamShare = hues.total ? hues.cream / hues.total : 0;
+  // Both halves matter: the photograph must be there, and the painted globe
+  // must not be. Checking only the first passes when satellite silently falls
+  // back to vector, which looks fine but is not what was asked for.
+  const painted = share > 0.05 && creamShare < 0.02;
+  if (!painted) failures++;
+  results.push(
+    `${painted ? 'PASS' : 'FAIL'}  ${'photograph rendered'.padEnd(18)} ` +
+      `${(share * 100).toFixed(1)}% photographic land, ${(creamShare * 100).toFixed(1)}% painted land`,
+  );
+}
 
 for (const [label, centre, zoom] of [
   ['Europe / Africa', [10, 20], 1],

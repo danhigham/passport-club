@@ -161,7 +161,9 @@ immediately and the 1mb one replaces it when it arrives.
 overlay by d3 — two independent implementations of the same projection. Disagree
 by a few pixels and the outlines visibly slide off their coastlines. So the
 shader is not "an orthographic projection", it is a transcription of *d3's*, and
-`npm run align` measures the result rather than trusting it: for a grid of
+`npm run align` measures the result rather than trusting it (and `npm run
+align:dev` repeats it against the dev server, where React mounts effects twice
+on purpose — which is where this layer was once found dead on arrival): for a grid of
 pixels it asks whether the photograph looks like land there and whether d3 says
 a polygon covers it, then nudges the comparison a few pixels in each direction
 and confirms the best match is dead centre.
@@ -174,6 +176,10 @@ PASS  Asia / Australia    best offset (0, 0)px, mismatch 13.6% vs 13.6% centred
 
 The residual ~10% is coastline fuzz, islands and December snow — what matters is
 that shifting the comparison does not improve it.
+
+It also checks the photograph is *there*, and that the painted globe is not.
+Alignment alone says nothing: a bare sphere with correctly-placed borders on it
+passes perfectly, and so does a silent fall back to the vector base map.
 
 **Cost.** 24ms per frame at the world view against 7ms for the vector globe, but
 that figure is from software rendering (SwiftShader in headless Chromium) and

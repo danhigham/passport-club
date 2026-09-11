@@ -159,14 +159,19 @@ export function createRasterGlobe(): RasterGlobe | null {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
   let ready = false;
+  let destroyed = false;
 
   return {
     canvas,
     get ready() {
-      return ready;
+      // A destroyed globe must never report itself usable. Callers skip painting
+      // land when the satellite layer is ready, so a dead layer claiming
+      // readiness produces a globe with neither photograph nor land on it.
+      return ready && !destroyed;
     },
 
     setTexture(image: TexImageSource) {
+      if (destroyed) return;
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
@@ -176,6 +181,7 @@ export function createRasterGlobe(): RasterGlobe | null {
     },
 
     render(globe: Globe, camera: Camera, dpr: number) {
+      if (destroyed) return;
       const w = Math.round(globe.width * dpr);
       const h = Math.round(globe.height * dpr);
       if (canvas.width !== w || canvas.height !== h) {
@@ -211,6 +217,8 @@ export function createRasterGlobe(): RasterGlobe | null {
     },
 
     destroy() {
+      if (destroyed) return;
+      destroyed = true;
       gl.deleteTexture(texture);
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);

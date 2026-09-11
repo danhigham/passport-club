@@ -15,7 +15,8 @@
     "bench": "node scripts/bench.mjs",
     "frames": "node scripts/frames.mjs",
     "texture": "node scripts/build-texture.mjs",
-    "align": "node scripts/align.mjs"
+    "align": "node scripts/align.mjs",
+    "align:dev": "DEV=1 node scripts/align.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

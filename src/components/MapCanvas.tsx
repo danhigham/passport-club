@@ -133,17 +133,37 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
    */
   const rasterRef = useRef<RasterGlobe | null>(null);
   const [textureVersion, setTextureVersion] = useState(0);
-  if (rasterRef.current === null && typeof document !== 'undefined') {
-    rasterRef.current = createRasterGlobe();
-  }
+
   useEffect(() => {
-    const raster = rasterRef.current;
+    /*
+     * Built here rather than during render, and cleared on teardown, so that a
+     * remount builds a fresh one.
+     *
+     * React mounts effects twice in development on purpose, to shake out
+     * exactly this. Holding the GL objects outside that cycle meant the first
+     * teardown deleted the shader and the texture while the ref still pointed
+     * at the corpse; the second mount uploaded an image to a deleted texture,
+     * declared itself ready, and drew nothing. The globe then rendered as
+     * satellite -- no painted land, because the photograph was supposed to
+     * provide it -- over an empty canvas. Production builds do not double-mount,
+     * so it only ever appeared in `npm run dev`.
+     */
+    const raster = createRasterGlobe();
+    rasterRef.current = raster;
     if (!raster) return;
+
+    let live = true;
     loadEarthTextures(import.meta.env.BASE_URL, (image) => {
+      if (!live) return;
       raster.setTexture(image);
       setTextureVersion((v) => v + 1); // repaint with whatever just arrived
     });
-    return () => raster.destroy();
+
+    return () => {
+      live = false;
+      raster.destroy();
+      rasterRef.current = null;
+    };
   }, []);
 
   const [hasSpun, setHasSpun] = useState(false);
