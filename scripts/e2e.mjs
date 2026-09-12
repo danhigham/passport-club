@@ -44,9 +44,13 @@ function findChrome() {
 
 /* ---------------------------------------------------------------- server */
 
+// DEV=1 runs against the dev server. React double-invokes state updaters there
+// on purpose, which is how a ten-question game came to record twenty answers.
 const server = spawn(
   'npx',
-  ['vite', 'preview', '--port', String(PORT), '--strictPort'],
+  process.env.DEV === '1'
+    ? ['vite', '--port', String(PORT), '--strictPort']
+    : ['vite', 'preview', '--port', String(PORT), '--strictPort'],
   { cwd: ROOT, stdio: 'ignore', detached: true },
 );
 /**
@@ -660,6 +664,43 @@ try {
     await missOnce();
     check('the fifth miss reveals it',
       (await page.locator('.prompt-dock.status-revealed').count()) === 1);
+  }
+
+  /* --- 19. a game of N questions records exactly N answers --- */
+  {
+    // Stated explicitly rather than inherited: the setup screen remembers the
+    // last game, so an assumed question count is an assumption about whatever
+    // ran before this.
+    const ROUNDS = 5;
+    await startGame(page, { mode: 'Continents', rounds: ROUNDS });
+
+    const played = [];
+    for (let i = 0; i < ROUNDS; i++) {
+      const h = await handle(page);
+      if (!h?.target) break;
+      played.push(h.target.name);
+      await clickPlace(page, h.target.point);
+      await page.waitForTimeout(1900); // answer, celebrate, auto-advance
+    }
+
+    check('every question was played once', played.length === ROUNDS,
+      `played ${played.length}: ${played.join(', ')}`);
+
+    await page.locator('.results').waitFor({ timeout: 8000 });
+    const listed = await page.locator('.review li').count();
+    const names = await page.locator('.review-name').allTextContents();
+    const found = await page
+      .locator('.figure', { hasText: 'found' })
+      .locator('.figure-value')
+      .textContent();
+
+    check('the results list one entry per question', listed === ROUNDS,
+      `${listed} entries for ${ROUNDS} questions`);
+    check('no question is listed twice',
+      new Set(played).size === played.length && listed === ROUNDS,
+      names.join(' | '));
+    check('the tally matches the number of questions', found === `${ROUNDS}/${ROUNDS}`,
+      `tally ${found}`);
   }
 
   check('no console errors during play', consoleErrors.length === 0,

@@ -21,9 +21,10 @@ npm run dev      # http://localhost:5173
 **What you're finding** — Continents → Countries → States & Counties → Cities.
 Roughly in order of difficulty; continents is where a five-year-old starts.
 
-**Where** — the whole world, one continent, or (for states/counties) one of 171
-countries, each with its own divisions and its own word for them: US *states*,
-French *departments*, Japanese *prefectures*, Irish *counties*.
+**Where** — the whole world, one continent, or (for states/counties) one of 211
+countries, each described by what it is actually divided into: “50 states & 1
+federal district”, “10 provinces & 3 territories”, “232 county / council areas”.
+The dominant word alone lies wherever a country mixes types, and 83 of them do.
 
 **How obscure** — three levels, which change *which* places get asked about
 rather than adding time pressure:

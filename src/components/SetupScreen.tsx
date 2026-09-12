@@ -153,9 +153,7 @@ export function SetupScreen({ core, config, onChange, onStart }: Props) {
                 onClick={() => setScope({ type: 'country', id: e.country })}
               >
                 <span className="chip-title">{e.countryName}</span>
-                <span className="chip-sub">
-                  {e.count} {e.term.toLowerCase()}
-                </span>
+                <span className="chip-sub">{e.summary}</span>
               </button>
             ))}
             {!admin1Options.length && (

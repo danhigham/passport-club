@@ -149,6 +149,19 @@ export function useGame(
   const [bestStreak, setBestStreak] = useState(0);
   const advanceTimer = useRef<number | null>(null);
 
+  /**
+   * The live round, mirrored outside React state.
+   *
+   * Judging a guess has to read the round and then act on it, and acting means
+   * appending a result, adding to the score and arming the auto-advance timer.
+   * None of that may happen inside a `setRound` updater, because updaters must
+   * be pure -- React runs them twice in development specifically to expose side
+   * effects hidden in them. Reading from a ref keeps the judging outside that
+   * machinery entirely.
+   */
+  const roundRef = useRef<RoundState | null>(null);
+  const streakRef = useRef(0);
+
   const total = session?.targets.length ?? 0;
   const finished = !!session && index >= total;
 
@@ -159,28 +172,31 @@ export function useGame(
     }
   };
 
+  /** Every write to the round goes through here, so the ref never drifts. */
+  const commitRound = useCallback((next: RoundState | null) => {
+    roundRef.current = next;
+    setRound(next);
+  }, []);
+
   /* Start (or restart) a session. */
   useEffect(() => {
     clearAdvance();
     setIndex(0);
     setResults([]);
     setScore(0);
+    streakRef.current = 0;
     setStreak(0);
     setBestStreak(0);
   }, [session]);
 
   /* Spin up each round as the index moves. */
   useEffect(() => {
-    if (!session) {
-      setRound(null);
+    const target = session?.targets[index];
+    if (!session || !target) {
+      commitRound(null);
       return;
     }
-    const target = session.targets[index];
-    if (!target) {
-      setRound(null);
-      return;
-    }
-    setRound({
+    commitRound({
       index,
       target,
       guesses: [],
@@ -190,26 +206,25 @@ export function useGame(
       startedAt: Date.now(),
       secondsLeft: session.config.timeLimit,
     });
-  }, [session, index]);
+  }, [session, index, commitRound]);
 
   /* Optional countdown. */
   useEffect(() => {
     if (!round || round.status !== 'guessing' || round.secondsLeft === null) return;
     if (round.secondsLeft <= 0) return;
     const id = window.setTimeout(() => {
-      setRound((r) =>
-        r && r.status === 'guessing' && r.secondsLeft !== null
-          ? { ...r, secondsLeft: r.secondsLeft - 1 }
-          : r,
-      );
+      const r = roundRef.current;
+      if (r && r.status === 'guessing' && r.secondsLeft !== null) {
+        commitRound({ ...r, secondsLeft: r.secondsLeft - 1 });
+      }
     }, 1000);
     return () => window.clearTimeout(id);
-  }, [round]);
+  }, [round, commitRound]);
 
   const finishRound = useCallback(
     (r: RoundState, solved: boolean, points: number, message: string) => {
       clearAdvance();
-      setRound({ ...r, status: solved ? 'correct' : 'revealed', message });
+      commitRound({ ...r, status: solved ? 'correct' : 'revealed', message });
       setResults((prev) => [
         ...prev,
         {
@@ -222,11 +237,12 @@ export function useGame(
       ]);
       setScore((s) => s + points);
       if (solved) {
-        setStreak((s) => {
-          const next = s + 1;
-          setBestStreak((b) => Math.max(b, next));
-          return next;
-        });
+        // Tracked in a ref as well, so the next streak can be computed without
+        // nesting one state update inside another's updater.
+        const next = streakRef.current + 1;
+        streakRef.current = next;
+        setStreak(next);
+        setBestStreak((b) => Math.max(b, next));
         // A correct answer gets a beat to celebrate, then moves on by itself.
         // Nothing clickable is shown during that beat — see GameScreen.
         advanceTimer.current = window.setTimeout(
@@ -234,53 +250,51 @@ export function useGame(
           AUTO_ADVANCE_MS,
         );
       } else {
+        streakRef.current = 0;
         setStreak(0);
       }
     },
-    [],
+    [commitRound],
   );
 
   const guess = useCallback(
     (input: JudgeInput) => {
       if (!session || !core) return;
-      setRound((current) => {
-        if (!current || current.status !== 'guessing') return current;
+      const current = roundRef.current;
+      if (!current || current.status !== 'guessing') return;
 
-        const verdict = judge(session, core, current.target, input);
-        const record: Guess = {
-          verdict: verdict.correct ? 'correct' : 'wrong',
-          hitName: verdict.hitName,
-          distanceKm: verdict.distanceKm,
-          at: input.lonLat,
-        };
-        const guesses = [...current.guesses, record];
+      const verdict = judge(session, core, current.target, input);
+      const record: Guess = {
+        verdict: verdict.correct ? 'correct' : 'wrong',
+        hitName: verdict.hitName,
+        distanceKm: verdict.distanceKm,
+        at: input.lonLat,
+      };
+      const guesses = [...current.guesses, record];
 
-        // Deferred so we're not calling setState inside another setState.
-        queueMicrotask(() => {
-          if (verdict.correct) {
-            const attempts = guesses.length - 1;
-            const base = POINTS_BY_ATTEMPT[Math.min(attempts, POINTS_BY_ATTEMPT.length - 1)];
-            const bonus =
-              attempts === 0 ? Math.min(streak, MAX_STREAK_BONUS) * STREAK_BONUS : 0;
-            const penalty = current.hintUsed ? 0.5 : 1;
-            finishRound(
-              { ...current, guesses },
-              true,
-              Math.round((base + bonus) * penalty),
-              correctText(attempts),
-            );
-          } else if (guesses.length >= session.config.attempts) {
-            finishRound({ ...current, guesses }, false, 0, revealText(current.target));
-          }
-        });
+      if (verdict.correct) {
+        const attempts = guesses.length - 1;
+        const base = POINTS_BY_ATTEMPT[Math.min(attempts, POINTS_BY_ATTEMPT.length - 1)];
+        const bonus =
+          attempts === 0 ? Math.min(streakRef.current, MAX_STREAK_BONUS) * STREAK_BONUS : 0;
+        const penalty = current.hintUsed ? 0.5 : 1;
+        finishRound(
+          { ...current, guesses },
+          true,
+          Math.round((base + bonus) * penalty),
+          correctText(attempts),
+        );
+        return;
+      }
 
-        if (verdict.correct || guesses.length >= session.config.attempts) {
-          return { ...current, guesses };
-        }
-        return { ...current, guesses, message: wrongText(current.target, record) };
-      });
+      if (guesses.length >= session.config.attempts) {
+        finishRound({ ...current, guesses }, false, 0, revealText(current.target));
+        return;
+      }
+
+      commitRound({ ...current, guesses, message: wrongText(current.target, record) });
     },
-    [session, core, streak, finishRound],
+    [session, core, finishRound, commitRound],
   );
 
   /* Timeout = a gentle reveal, never a hard failure. */
@@ -291,15 +305,14 @@ export function useGame(
   }, [round, finishRound]);
 
   const useHint = useCallback(() => {
-    setRound((r) => (r && r.status === 'guessing' ? { ...r, hintUsed: true } : r));
-  }, []);
+    const r = roundRef.current;
+    if (r && r.status === 'guessing') commitRound({ ...r, hintUsed: true });
+  }, [commitRound]);
 
   const skip = useCallback(() => {
-    setRound((r) => {
-      if (!r || r.status !== 'guessing') return r;
-      queueMicrotask(() => finishRound(r, false, 0, revealText(r.target)));
-      return r;
-    });
+    const r = roundRef.current;
+    if (!r || r.status !== 'guessing') return;
+    finishRound(r, false, 0, revealText(r.target));
   }, [finishRound]);
 
   const next = useCallback(() => {

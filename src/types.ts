@@ -83,6 +83,12 @@ export interface Admin1IndexEntry {
   /** "States", "Counties", "Prefectures" — whatever this country calls them. */
   term: string;
   termSingular: string;
+  /**
+   * What the country is actually divided into, in plain English: "50 states &
+   * 1 federal district". The dominant term alone misleads wherever a country
+   * mixes types, and most do.
+   */
+  summary: string;
   bytes: number;
 }
 

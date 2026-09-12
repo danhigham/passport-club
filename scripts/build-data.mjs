@@ -592,9 +592,53 @@ const TERM_FIX = {
   'Two-tier County': 'County / Council Area',
   'Council Area': 'County / Council Area',
   'Autonomous Community': 'Province',
-  'Federal District': 'State',
   'Capital Region': 'Region',
+  // Note there is deliberately no 'Federal District' -> 'State' here. It was
+  // the reason the United States was described as having 51 states, which is
+  // not a number of states that exists: it has fifty, plus one federal
+  // district. Softening is for collapsing synonyms, not for erasing a real
+  // distinction.
 };
+
+/** Crude but adequate English pluralisation for division names. */
+function pluralise(word) {
+  if (/y$/i.test(word)) return word.slice(0, -1) + 'ies';
+  if (/(s|sh|ch|x|z)$/i.test(word)) return word + 'es';
+  return word + 's';
+}
+
+/**
+ * A plain-English description of what a country is divided into.
+ *
+ * The dominant type alone is misleading where a country mixes them: the United
+ * States came out as "51 states", which is not a number of states that exists.
+ * It is fifty states and one federal district, and 83 of the 211 countries here
+ * are mixtures of some kind.
+ *
+ * Deliberately built from the raw Natural Earth types rather than the softened
+ * ones, since the softening exists to give a country a single friendly label and
+ * would merge the very distinctions this is meant to show.
+ */
+function divisionSummary(features, total) {
+  const counts = new Map();
+  for (const f of features) {
+    const raw = (f.properties.type_en || 'Region').trim();
+    // Softened first, so genuine synonyms collapse: the United Kingdom's
+    // unitary authorities, metropolitan districts and London boroughs are one
+    // kind of thing to a child, and listing them separately is noise.
+    const type = (TERM_FIX[raw] || raw).toLowerCase();
+    counts.set(type, (counts.get(type) || 0) + 1);
+  }
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const phrase = ([type, n]) => `${n} ${n === 1 ? type : pluralise(type)}`;
+
+  if (ranked.length === 1) return phrase(ranked[0]);
+  if (ranked.length === 2) return `${phrase(ranked[0])} & ${phrase(ranked[1])}`;
+  // Three or more kinds is too much for a chip, and the tail is always small.
+  // The dominant name with the true total reads naturally and stays honest
+  // about how many places there are.
+  return `${total} ${pluralise(ranked[0][0])}`;
+}
 
 function divisionTerm(features) {
   const counts = {};
@@ -925,6 +969,7 @@ async function main() {
       count: out.length,
       term: term.plural,
       termSingular: term.singular,
+      summary: divisionSummary(feats, out.length),
       bytes,
     });
   }
