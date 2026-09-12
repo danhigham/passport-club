@@ -159,8 +159,15 @@ equirectangular image, wrapped onto the globe by a fragment shader: about forty
 lines of GLSL over a single full-screen quad. There is no tile server, no mesh
 and no scene graph, because the projection is fixed — every pixel of the disc is
 one point on the sphere, so the shader goes straight from pixel to latitude and
-longitude and samples the photograph. Two sizes ship; the 80kb one appears
-immediately and the 1mb one replaces it when it arrives.
+longitude and samples the photograph. Two sizes ship; the 72kb one appears
+immediately and the 0.9mb one replaces it when it arrives.
+
+The month is chosen, not incidental. The composites are cloudless, so what looks
+like cloud over Russia is snow, and how much there is depends entirely on which
+one you take. Between 50N and 75N the share of land reading as snow or ice runs
+from 69.9% in December to 7.2% in August; between 35N and 50N, where most of
+Europe sits, it is 12.2% against 0.2%. August it is — a green northern
+hemisphere is what lets a child tell one place from another.
 
 **The hard part is agreement.** The imagery is projected by the shader and the
 overlay by d3 — two independent implementations of the same projection. Disagree
@@ -179,7 +186,7 @@ PASS  the Americas       best offset (-1, -1)px, mismatch 10.6% vs 10.6% centred
 PASS  Asia / Australia    best offset (0, 0)px, mismatch 13.6% vs 13.6% centred
 ```
 
-The residual ~10% is coastline fuzz, islands and December snow — what matters is
+The residual ~10% is coastline fuzz, islands and permanent ice — what matters is
 that shifting the comparison does not improve it.
 
 It also checks the photograph is *there*, and that the painted globe is not.

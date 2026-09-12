@@ -23,12 +23,26 @@ const CACHE = path.join(ROOT, '.cache');
 const OUT = path.join(ROOT, 'public', 'textures');
 
 /**
- * NASA Visible Earth, "Blue Marble: Next Generation" (December 2004), with
- * topography and bathymetry. Public domain.
+ * NASA Visible Earth, "Blue Marble: Next Generation", with topography and
+ * bathymetry. Public domain.
+ *
+ * August, and the month matters more than anything else about this file. The
+ * composites are cloudless, so what looks like cloud over Russia and northern
+ * Europe is snow, and how much of it there is depends entirely on which month
+ * you pick. Measured as the share of land between 50N and 75N that reads as
+ * snow or ice:
+ *
+ *     December  69.9%      June       17.6%
+ *     September 16.0%      July        7.5%
+ *                          August      7.2%
+ *
+ * Between 35N and 50N — the latitudes most of Europe sits at — it is 12.2% in
+ * December against 0.2% in August. The northern hemisphere is simply green in
+ * August, which is what a child needs to see to tell one place from another.
  */
 const SOURCE = {
-  url: 'https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/world.topo.bathy.200412.3x5400x2700.jpg',
-  file: 'blue-marble-5400.jpg',
+  url: 'https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73776/world.topo.bathy.200408.3x5400x2700.jpg',
+  file: 'blue-marble-200408-5400.jpg',
 };
 
 /**
