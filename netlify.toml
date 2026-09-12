@@ -1,0 +1,51 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[build.environment]
+  # The build scripts use modern Node APIs (top-level await, fetch, node: imports).
+  NODE_VERSION = "24"
+
+# ---------------------------------------------------------------- caching
+#
+# Two kinds of asset, two policies.
+#
+# Vite fingerprints everything under /assets, so those files can never change
+# meaning and are safe to cache forever. The map data and the globe texture keep
+# stable names across builds, so they must not be immutable or a correction
+# would never reach anyone who had already played. They get a short freshness
+# window and rely on revalidation after it, which is cheap because Netlify
+# serves ETags.
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/data/*"
+  [headers.values]
+    Cache-Control = "public, max-age=3600, stale-while-revalidate=86400"
+
+[[headers]]
+  for = "/textures/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"
+
+# The shell must always be re-checked, or a new build's asset names are never
+# discovered and the site appears frozen.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "SAMEORIGIN"
+
+# Deliberately no catch-all rewrite to index.html. The game has no client-side
+# routing, so a mistyped path is genuinely not found; rewriting it would render
+# the game at a bogus URL and hide the mistake.
