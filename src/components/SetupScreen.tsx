@@ -99,7 +99,8 @@ export function SetupScreen({ core, config, onChange, onStart }: Props) {
     <div className="setup">
       <header className="setup-head">
         <h1>
-          <span className="logo-mark">{'\u{1F6C2}'}</span> Passport Club
+          <span className="logo-mark">{'\u{1F6C2}'}</span> mypassport
+          <span className="logo-tld">.club</span>
         </h1>
         <p className="tagline">
           Pick what you'd like to find and how much help you want. There's no wrong

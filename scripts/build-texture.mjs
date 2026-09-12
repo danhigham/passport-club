@@ -76,7 +76,7 @@ async function fetchSource() {
 }
 
 async function main() {
-  console.log('\nPassport Club texture build\n');
+  console.log('\nmypassport.club texture build\n');
   const src = await fetchSource();
   fs.mkdirSync(OUT, { recursive: true });
 

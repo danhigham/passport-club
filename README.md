@@ -1,10 +1,10 @@
-# Passport Club
+# mypassport.club
 
 A friendly geography game: you're shown a place, you find it on a spinnable
 globe. Aimed at children and at anyone whose world map is still a bit fuzzy.
 
 Where [MapTap](https://maptap.gg) gives everyone the same satellite globe with no
-borders and no labels, Passport Club's whole point is that **you choose how hard
+borders and no labels, mypassport.club's whole point is that **you choose how hard
 it is** — what kind of place you're hunting for, how obscure it's allowed to be,
 and how many training wheels stay on.
 

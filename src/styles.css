@@ -1,5 +1,5 @@
 /* =========================================================================
-   Passport Club
+   mypassport.club
    A deliberately chunky, high-contrast, thumb-friendly look: big tap targets,
    rounded everything, and a warm palette that reads well on a tablet.
    ========================================================================= */
@@ -150,6 +150,11 @@ h3 {
   display: inline-block;
   transform: rotate(-8deg);
   margin-right: 6px;
+}
+
+/* The name is a domain, so the suffix is tinted rather than shouted. */
+.logo-tld {
+  color: var(--sun);
 }
 
 .tagline {

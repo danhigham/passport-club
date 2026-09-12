@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Passport Club — data pipeline
+ * mypassport.club — data pipeline
  *
  * Downloads Natural Earth public-domain vector data and bakes it down into
  * small, label-free GeoJSON files the game can load instantly.
@@ -660,7 +660,7 @@ function divisionTerm(features) {
 /* ------------------------------------------------------------------- main */
 
 async function main() {
-  console.log('\nPassport Club data build\n');
+  console.log('\nmypassport.club data build\n');
   fs.mkdirSync(OUT, { recursive: true });
 
   /* ---- countries -------------------------------------------------- */
