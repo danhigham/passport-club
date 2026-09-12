@@ -44,7 +44,15 @@ than one dial:
   actually learn a map.
 - **Mark cities with dots** — makes city mode multiple-choice.
 - **Glow the country/continent it's in** — narrows the search before you start.
+- **Say which part of the world it's in** — the line under the question reading
+  “Country in Asia”. A bigger clue than it looks: it narrows the search from the
+  whole globe to one region before the player has looked at anything.
 - **Timer** — off by default. There is no rush.
+
+Plus **how many tries per question** (1, 2, 3 or 5) and **how many questions**.
+One try is sudden death; five is forgiving enough for a small child to hunt
+around. Points fall with each miss — 100, 70, 40, 25, 15 — so a generous setting
+costs score rather than nothing.
 
 Every wrong guess names what you *did* hit and points you the right way
 ("That's Spain. France is north-east of there."), because being told "no" teaches

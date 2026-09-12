@@ -26,7 +26,8 @@ export function GameScreen({ session, core, game, onQuit }: Props) {
   if (!round) return null;
 
   const { target, status, guesses, message, secondsLeft, hintUsed } = round;
-  const attemptsLeft = Math.max(0, 3 - guesses.length);
+  const { attempts, showRegionHint } = session.config;
+  const attemptsLeft = Math.max(0, attempts - guesses.length);
   const timerLow = secondsLeft !== null && secondsLeft <= 5;
   const isLast = round.index + 1 >= game.total;
 
@@ -73,14 +74,14 @@ export function GameScreen({ session, core, game, onQuit }: Props) {
               {MODE_INFO[session.config.mode].emoji} Find
             </span>
             <h2 className="prompt-name">{target.name}</h2>
-            <p className="prompt-sub">{target.subtitle}</p>
+            {showRegionHint && <p className="prompt-sub">{target.subtitle}</p>}
           </div>
 
           <div className="prompt-side">
             {status === 'guessing' ? (
               <>
                 <div className="lives" aria-label={`${attemptsLeft} tries left`}>
-                  {[0, 1, 2].map((i) => (
+                  {Array.from({ length: attempts }, (_, i) => (
                     <span key={i} className={`pip ${i < attemptsLeft ? 'full' : 'spent'}`} />
                   ))}
                 </div>

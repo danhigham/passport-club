@@ -14,6 +14,8 @@ interface Props {
 const MODES: Mode[] = ['continent', 'country', 'admin1', 'city'];
 const LEVELS: Level[] = ['explorer', 'traveller', 'globetrotter'];
 const ROUND_CHOICES = [5, 10, 15, 20];
+/** One try is sudden death; five is very forgiving. */
+const ATTEMPT_CHOICES = [1, 2, 3, 5];
 
 export function SetupScreen({ core, config, onChange, onStart }: Props) {
   const [countryQuery, setCountryQuery] = useState('');
@@ -278,6 +280,16 @@ export function SetupScreen({ core, config, onChange, onStart }: Props) {
             onChange={(v) => onChange({ showBorders: v })}
           />
           <Switch
+            label="Say which part of the world it's in"
+            hint={
+              config.mode === 'continent'
+                ? "Shows how many countries the continent has."
+                : "Shows a line like \u201cCountry in Asia\u201d under the name, which narrows the search before you start looking."
+            }
+            checked={config.showRegionHint}
+            onChange={(v) => onChange({ showRegionHint: v })}
+          />
+          <Switch
             label="Show place names"
             hint="Labels everything except the one you're looking for. Great for learning."
             checked={config.showLabels}
@@ -309,6 +321,22 @@ export function SetupScreen({ core, config, onChange, onStart }: Props) {
             checked={config.timeLimit !== null}
             onChange={(v) => onChange({ timeLimit: v ? 20 : null })}
           />
+        </div>
+
+        <div className="rounds-row">
+          <span className="rounds-label">How many tries per question?</span>
+          <div className="chip-grid tight">
+            {ATTEMPT_CHOICES.map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`chip small ${config.attempts === n ? 'selected' : ''}`}
+                onClick={() => onChange({ attempts: n })}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="rounds-row">

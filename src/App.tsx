@@ -18,6 +18,8 @@ const DEFAULT_CONFIG: GameConfig = {
   showLabels: false,
   showCityDots: true,
   narrowToParent: false,
+  showRegionHint: true,
+  attempts: 3,
   rounds: 10,
   timeLimit: null,
 };

@@ -162,7 +162,7 @@ async function dragGlobe(page, dx, dy) {
 async function currentPrompt(page) {
   return {
     name: await page.locator('.prompt-name').textContent(),
-    sub: await page.locator('.prompt-sub').textContent(),
+    sub: await page.locator('.prompt-sub').textContent().catch(() => null),
     round: await page.locator('.stat', { hasText: 'Round' }).locator('.stat-value').textContent(),
     score: await page.locator('.stat', { hasText: 'Score' }).locator('.stat-value').textContent(),
   };
@@ -180,7 +180,12 @@ async function startGame(page, { mode, scopeLabel, level, rounds }) {
     await page.locator('.big-card', { hasText: level }).first().click();
   }
   if (rounds) {
-    await page.locator('.chip.small', { hasText: new RegExp(`^${rounds}$`) }).click();
+    // Scoped to the question-count row: there are now two rows of small chips
+    // on the setup screen, and an unscoped match hits both.
+    await page
+      .locator('.rounds-row', { hasText: 'questions' })
+      .locator('.chip.small', { hasText: new RegExp(`^${rounds}$`) })
+      .click();
   }
   await page.locator('.start-button').click();
   await page.locator('.globe-stage').waitFor({ timeout: 30000 });
@@ -589,6 +594,72 @@ try {
     );
     check('the pulse ring stays put instead of flying across the screen', drift < 3,
       `centre drifted ${drift.toFixed(1)}px`);
+  }
+
+  /* --- 17. the region hint can be turned off --- */
+  {
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    check('the region hint is shown by default',
+      (await page.locator('.prompt-sub').count()) === 1);
+    const shown = await page.locator('.prompt-sub').textContent();
+
+    await page.goto(`${ORIGIN}/?e2e=1`);
+    await page.locator('.setup').waitFor();
+    await page.locator('.switch', { hasText: "Say which part of the world it's in" }).click();
+    await page.locator('.start-button').click();
+    await page.locator('.globe-stage').waitFor();
+    await page.waitForFunction(() => window.__passportClub?.camera != null);
+    await page.locator('.prompt-name').waitFor();
+
+    check('turning the region hint off removes it',
+      (await page.locator('.prompt-sub').count()) === 0,
+      `was showing \"${shown}\"`);
+    check('the question itself is still there',
+      ((await page.locator('.prompt-name').textContent()) ?? '').length > 1);
+  }
+
+  /* --- 18. the number of tries is configurable --- */
+  const setTries = async (n) => {
+    await page.goto(`${ORIGIN}/?e2e=1`);
+    await page.locator('.setup').waitFor();
+    await page.locator('.big-card', { hasText: 'Countries' }).first().click();
+    await page.locator('.chip', { hasText: 'Whole world' }).first().click();
+    await page
+      .locator('.rounds-row', { hasText: 'tries' })
+      .locator('.chip.small', { hasText: new RegExp(`^${n}$`) })
+      .click();
+    await page.locator('.start-button').click();
+    await page.locator('.globe-stage').waitFor();
+    await page.waitForFunction(
+      () => window.__passportClub?.armed?.() === true && window.__passportClub.animating === false,
+      null,
+      { timeout: 8000 },
+    );
+  };
+  const missOnce = async () => {
+    const h = await handle(page);
+    const anti = [((h.target.point[0] + 360) % 360) - 180, -h.target.point[1]];
+    await clickPlace(page, anti);
+    await page.waitForTimeout(350);
+  };
+
+  {
+    await setTries(1);
+    check('one try shows a single life', (await page.locator('.pip').count()) === 1);
+    await missOnce();
+    check('with one try, a single miss reveals the answer',
+      (await page.locator('.prompt-dock.status-revealed').count()) === 1);
+  }
+  {
+    await setTries(5);
+    check('five tries shows five lives', (await page.locator('.pip').count()) === 5);
+    for (let i = 0; i < 4; i++) await missOnce();
+    const stillGoing = (await handle(page)).status === 'guessing';
+    check('with five tries, four misses do not reveal it', stillGoing,
+      `status ${(await handle(page)).status}`);
+    await missOnce();
+    check('the fifth miss reveals it',
+      (await page.locator('.prompt-dock.status-revealed').count()) === 1);
   }
 
   check('no console errors during play', consoleErrors.length === 0,

@@ -30,9 +30,14 @@ export function isArmed(round: { startedAt: number } | null): boolean {
   return !!round && Date.now() - round.startedAt >= ROUND_ARM_MS;
 }
 
-/** Points for solving a round, by how many wrong guesses came first. */
-const POINTS_BY_ATTEMPT = [100, 70, 40];
-const MAX_ATTEMPTS = 3;
+/**
+ * Points for solving a round, by how many wrong guesses came first.
+ *
+ * Extends far enough for the most generous setting; anything beyond it scores
+ * the floor rather than nothing, because a player who gets there has still
+ * worked the answer out.
+ */
+const POINTS_BY_ATTEMPT = [100, 70, 40, 25, 15, 10];
 const STREAK_BONUS = 15;
 const MAX_STREAK_BONUS = 5;
 
@@ -264,12 +269,12 @@ export function useGame(
               Math.round((base + bonus) * penalty),
               correctText(attempts),
             );
-          } else if (guesses.length >= MAX_ATTEMPTS) {
+          } else if (guesses.length >= session.config.attempts) {
             finishRound({ ...current, guesses }, false, 0, revealText(current.target));
           }
         });
 
-        if (verdict.correct || guesses.length >= MAX_ATTEMPTS) {
+        if (verdict.correct || guesses.length >= session.config.attempts) {
           return { ...current, guesses };
         }
         return { ...current, guesses, message: wrongText(current.target, record) };

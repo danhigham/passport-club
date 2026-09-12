@@ -118,6 +118,14 @@ export interface GameConfig {
   showCityDots: boolean;
   /** Highlight the country a target state/city sits inside. */
   narrowToParent: boolean;
+  /**
+   * Show the line under the question naming the part of the world it's in —
+   * "Country in Asia", "County in Ireland". A sizeable clue: it narrows the
+   * search from the whole globe to one region before the player has looked.
+   */
+  showRegionHint: boolean;
+  /** How many guesses a player gets before the answer is revealed. */
+  attempts: number;
   rounds: number;
   /** Per-round countdown in seconds, or null for "take your time". */
   timeLimit: number | null;
