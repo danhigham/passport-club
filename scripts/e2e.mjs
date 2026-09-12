@@ -703,6 +703,54 @@ try {
       `tally ${found}`);
   }
 
+  /* --- 20. continent mode settles on Explorer by itself --- */
+  {
+    await page.goto(`${ORIGIN}/?e2e=1`);
+    await page.locator('.setup').waitFor();
+
+    // Pick a level that continent mode cannot use, then switch to it.
+    await page.locator('.big-card', { hasText: 'Countries' }).first().click();
+    await page.locator('.big-card', { hasText: 'Globetrotter' }).click();
+    const selected = () =>
+      page.locator('.big-card.selected .card-title').allTextContents();
+    check('a harder level can be chosen outside continent mode',
+      (await selected()).includes('Globetrotter'), (await selected()).join(', '));
+
+    await page.locator('.big-card', { hasText: 'Continents' }).first().click();
+    await page.waitForTimeout(150);
+    const now = await selected();
+    check('choosing Continents selects Explorer', now.includes('Explorer'), now.join(', '));
+    check('no unusable level is left selected',
+      !now.includes('Globetrotter') && !now.includes('Traveller'), now.join(', '));
+    check('the unusable levels are disabled',
+      (await page.locator('.big-card:disabled').count()) === 2);
+
+    // And it must survive a reload, since settings are remembered.
+    await page.reload();
+    await page.locator('.setup').waitFor();
+    const afterReload = await selected();
+    check('the correction is remembered, not re-applied each time',
+      afterReload.includes('Explorer') && !afterReload.includes('Globetrotter'),
+      afterReload.join(', '));
+
+    // A contradictory setting stored by an older version must also be settled
+    // on the way in, which is a different code path from changing a setting.
+    await page.evaluate(() => {
+      const key = 'passport-club/config/v1';
+      const stored = JSON.parse(localStorage.getItem(key) ?? '{}');
+      localStorage.setItem(
+        key,
+        JSON.stringify({ ...stored, mode: 'continent', level: 'globetrotter' }),
+      );
+    });
+    await page.reload();
+    await page.locator('.setup').waitFor();
+    const fromStorage = await selected();
+    check('a contradictory stored setting is settled on load',
+      fromStorage.includes('Explorer') && !fromStorage.includes('Globetrotter'),
+      fromStorage.join(', '));
+  }
+
   check('no console errors during play', consoleErrors.length === 0,
     consoleErrors.slice(0, 3).join(' | '));
 } catch (err) {

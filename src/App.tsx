@@ -24,12 +24,32 @@ const DEFAULT_CONFIG: GameConfig = {
   timeLimit: null,
 };
 
+/**
+ * Settle any settings that contradict each other.
+ *
+ * Applied to every change and to whatever was stored from last time, so an
+ * impossible combination cannot arrive by either route. There are only seven
+ * continents and all of them are common knowledge, so the difficulty levels
+ * have nothing to choose between: continent mode is always Explorer. Leaving
+ * the stored level alone meant picking Continents could show Globetrotter
+ * selected and disabled at the same time.
+ */
+function reconcile(config: GameConfig): GameConfig {
+  if (config.mode === 'continent' && config.level !== 'explorer') {
+    return { ...config, level: 'explorer' };
+  }
+  return config;
+}
+
 function loadConfig(): GameConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_CONFIG;
     // Merge rather than replace, so new options gain their defaults.
-    return { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as Partial<GameConfig>) };
+    return reconcile({
+      ...DEFAULT_CONFIG,
+      ...(JSON.parse(raw) as Partial<GameConfig>),
+    });
   } catch {
     return DEFAULT_CONFIG;
   }
@@ -57,7 +77,7 @@ export default function App() {
   }, [config]);
 
   const patchConfig = useCallback((patch: Partial<GameConfig>) => {
-    setConfig((c) => ({ ...c, ...patch }));
+    setConfig((c) => reconcile({ ...c, ...patch }));
   }, []);
 
   const begin = useCallback(
