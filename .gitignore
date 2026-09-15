@@ -13,3 +13,6 @@ public/textures/
 
 # Local Netlify folder
 .netlify
+
+# local agent tooling, not part of the project
+.pi/
