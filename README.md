@@ -218,6 +218,14 @@ the first version cost **107–159 ms per frame**, which is 6–9 fps.
 
 It now runs in 6–16 ms. Three changes, in order of how much they bought:
 
+**Between questions the view re-centres but keeps your zoom.** Someone settles
+on a magnification that suits them, and resetting it every question would mean
+re-zooming ten times a game. The centre still travels home, because the next
+answer could be anywhere. Only gestures count as choosing a zoom — the reveal
+flight parks the camera deep on the last answer, and reading *that* back would
+have each round creep further in. The home button restores everything, and a new
+game starts from its own framing.
+
 **Level of detail.** At the world view the globe is ~600 px across, which puts
 roughly half a degree in every pixel — against source data detailed to 0.05°.
 We were paying for ten times the detail a pixel could show. A simplified copy

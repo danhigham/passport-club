@@ -119,7 +119,10 @@ export function MapCanvas({ session, core, round, onGuess }: Props) {
    */
   const gameId = useRef(0);
   const gameKey = useMemo(() => ++gameId.current, [session]);
-  const viewKey = `${gameKey}:${round?.index ?? -1}`;
+  const viewKey = useMemo(
+    () => ({ game: gameKey, round: round?.index ?? -1 }),
+    [gameKey, round?.index],
+  );
 
   const controls = useGlobeControls(globe, startCamera, viewKey, handleTap, handleHover);
   const camera = controls.camera;

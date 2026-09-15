@@ -65,7 +65,14 @@ export function useGlobeControls(
    * keyboard appearing). Keying the reset on identity instead would snatch the
    * globe back to its starting position while the player was mid-search.
    */
-  viewKey: unknown,
+  /**
+   * `game` changes when a new game starts, `round` on each question.
+   *
+   * The two are treated differently. A new game re-frames completely, opening
+   * shot and all. A new question only re-centres, and deliberately keeps
+   * whatever zoom the player had settled on — see `chosenZoom`.
+   */
+  viewKey: { game: unknown; round: unknown },
   onTap: (x: number, y: number) => void,
   onHover?: (x: number, y: number) => void,
 ): GlobeControls {
@@ -80,6 +87,16 @@ export function useGlobeControls(
   const tapRef = useRef(onTap);
   const hoverRef = useRef(onHover);
   const rafRef = useRef<number | null>(null);
+
+  /**
+   * The zoom the player last chose for themselves, or null if they haven't.
+   *
+   * Only gestures write here — wheel, pinch, the zoom buttons. Deliberately not
+   * the camera's current zoom, because between questions the camera is usually
+   * parked wherever the reveal flew it, which is nobody's choice. Reading that
+   * back would have each round creep further in.
+   */
+  const chosenZoom = useRef<number | null>(null);
 
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{
@@ -150,35 +167,48 @@ export function useGlobeControls(
     (factor: number) => {
       stopAnimation();
       apply({ ...camRef.current, zoom: camRef.current.zoom * factor });
+      chosenZoom.current = camRef.current.zoom;
     },
     [apply],
   );
 
-  const reset = useCallback(() => flyTo(initialRef.current, 550), [flyTo]);
+  /** The home button means "put it back", including the zoom. */
+  const reset = useCallback(() => {
+    chosenZoom.current = null;
+    flyTo(initialRef.current, 550);
+  }, [flyTo]);
 
   // Keep the "home" viewpoint current at all times, so the reset button frames
   // correctly after a resize — but without moving the camera.
   initialRef.current = initial;
 
   /* Re-frame only when the view is genuinely meant to change. */
-  const lastKey = useRef<unknown>(viewKey);
+  const lastKey = useRef(viewKey);
   const framed = useRef(false);
   useEffect(() => {
     // Nothing can be framed until the canvas has been measured.
     if (!globe) return;
-    const keyChanged = !Object.is(lastKey.current, viewKey);
-    if (framed.current && !keyChanged) return;
-    const isFirstFraming = !framed.current;
+    const newGame = !Object.is(lastKey.current.game, viewKey.game);
+    const newRound = !Object.is(lastKey.current.round, viewKey.round);
+    if (framed.current && !newGame && !newRound) return;
+    const isFirstFraming = !framed.current || newGame;
     framed.current = true;
     lastKey.current = viewKey;
 
     const home = initialRef.current;
+    // A new game starts from its own framing, whatever the last one ended on.
+    if (newGame) chosenZoom.current = null;
 
     if (!isFirstFraming) {
-      // Between questions. The camera is usually still parked on the last
-      // answer, so flying home shows the player the journey back out rather
-      // than teleporting them and leaving them to work out where they now are.
-      flyTo(home, REFRAME_MS);
+      /*
+       * Between questions: re-centre, but keep the player's zoom.
+       *
+       * Someone settles on a magnification that suits them and expects it to
+       * stay there; resetting it every question means re-zooming ten times a
+       * game. The centre still travels home, because the next answer could be
+       * anywhere and being left pointed at the last one is disorienting.
+       */
+      flyTo({ center: home.center, zoom: chosenZoom.current ?? home.zoom }, REFRAME_MS);
       return;
     }
 
@@ -195,7 +225,7 @@ export function useGlobeControls(
       camRef.current = home;
       setCamera(home);
     }
-  }, [viewKey, globe, flyTo]);
+  }, [viewKey.game, viewKey.round, globe, flyTo]);
 
   useEffect(() => () => stopAnimation(), []);
 
@@ -262,6 +292,7 @@ export function useGlobeControls(
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
         if (g.pinchDist > 0) {
           apply({ ...camRef.current, zoom: camRef.current.zoom * (dist / g.pinchDist) });
+          chosenZoom.current = camRef.current.zoom;
         }
         g.pinchDist = dist;
         return;
@@ -324,6 +355,7 @@ export function useGlobeControls(
         ...camRef.current,
         zoom: camRef.current.zoom * Math.exp(-e.deltaY * unit * WHEEL_SENSITIVITY),
       });
+      chosenZoom.current = camRef.current.zoom;
     };
 
     const onLeave = () => hoverRef.current?.(-1, -1);

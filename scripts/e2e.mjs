@@ -322,7 +322,17 @@ try {
     await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
     const before = await handle(page);
     await page.locator('.ghost-button', { hasText: 'Hint' }).click();
-    await page.waitForTimeout(1100);
+    // Wait for the flight to finish rather than guessing at its duration. A
+    // fixed pause left only a few hundred milliseconds of slack over the
+    // animation, which is not enough when several browsers are competing for a
+    // software renderer, and the check failed intermittently.
+    await page.waitForFunction(() => window.__passportClub?.hint != null, null, {
+      timeout: 8000,
+    });
+    await page.waitForFunction(() => window.__passportClub?.animating === false, null, {
+      timeout: 8000,
+    });
+    await page.waitForTimeout(150);
     const after = await handle(page);
 
     check('the hint produces a search area', after.hint != null);
@@ -480,6 +490,7 @@ try {
     await page.locator('.map-controls button[aria-label="Zoom in"]').click();
     await page.locator('.map-controls button[aria-label="Zoom in"]').click();
     await page.waitForTimeout(400);
+    const zoomed = (await handle(page)).camera;
 
     const h = await handle(page);
     await clickPlace(page, h.target.point);
@@ -500,10 +511,36 @@ try {
     const settled = await handle(page);
     check('no guess is spent while the view is in motion',
       settled.guesses.length === 0, `${settled.guesses.length} guess(es)`);
-    check('the journey ends back at the round\u2019s home view',
-      Math.abs(settled.camera.zoom - home.zoom) < 0.4 &&
-        Math.abs(settled.camera.center[1] - home.center[1]) < 3,
-      `ended ${settled.camera.center.map((n) => n.toFixed(1))} z${settled.camera.zoom.toFixed(2)}`);
+    // The centre travels home, because the next answer could be anywhere and
+    // being left pointed at the last one is disorienting.
+    check('the next question re-centres on the round\u2019s home view',
+      Math.abs(settled.camera.center[1] - home.center[1]) < 3,
+      `ended at ${settled.camera.center.map((n) => n.toFixed(1))}, home is ${home.center.map((n) => n.toFixed(1))}`);
+
+    // The zoom does not, because the player chose it. Resetting it every
+    // question means re-zooming ten times a game.
+    check('the player\u2019s zoom survives the question change',
+      Math.abs(settled.camera.zoom - zoomed.zoom) < 0.25,
+      `zoomed to ${zoomed.zoom.toFixed(2)}, next question opened at ` +
+        `${settled.camera.zoom.toFixed(2)} (home is ${home.zoom.toFixed(2)})`);
+
+    // ... but the home button still means "put it back", zoom included.
+    await page.locator('.map-controls button[aria-label="Reset the view"]').click();
+    await page.waitForTimeout(900);
+    const afterReset = (await handle(page)).camera;
+    check('the home button restores the original zoom',
+      Math.abs(afterReset.zoom - home.zoom) < 0.1,
+      `${afterReset.zoom.toFixed(2)} vs home ${home.zoom.toFixed(2)}`);
+
+    // And a new game must not inherit the last one's magnification.
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.locator('.map-controls button[aria-label="Zoom in"]').click();
+    await page.waitForTimeout(300);
+    await startGame(page, { mode: 'Countries', scopeLabel: 'Whole world', level: 'Explorer', rounds: 5 });
+    const fresh = (await handle(page)).camera;
+    check('a new game starts from its own framing, not the last zoom',
+      Math.abs(fresh.zoom - home.zoom) < 0.25,
+      `new game opened at ${fresh.zoom.toFixed(2)}, home is ${home.zoom.toFixed(2)}`);
   }
 
   /* --- 14. a scoped game opens by flying in from the whole planet --- */
