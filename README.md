@@ -259,6 +259,34 @@ reports paint times. Frame timing is instrumented permanently — it costs two
 clock reads per frame, and rendering cost is the thing most likely to regress
 here.
 
+### Findability
+
+The share card matters more here than search ranking. Social scrapers — Facebook,
+WhatsApp, Slack, Discord, X — do not run JavaScript, and this is a
+client-rendered app: without Open Graph tags a shared link was a bare URL with
+no title, description or picture. A link to a colourful globe game is exactly
+the sort of thing passed between parents, so that was the costly gap.
+
+The card image is a real screenshot of the game, captured by a script against
+the live site rather than mocked up, with the injected Netlify badge blocked and
+the emoji stripped (the machine that renders it has no emoji font, so they would
+bake in as empty boxes).
+
+The site also answered on both `mypassport.club` and the `netlify.app`
+subdomain, which reads as the same content at two addresses. The subdomain is
+now `301`ed to the custom domain — a redirect rather than a `noindex`, since it
+passes any accumulated ranking signal to the surviving address instead of
+discarding it. The rule matches the bare subdomain only, so deploy previews stay
+reachable for checking before release.
+
+`robots.txt` disallows `/data/` and `/textures/`: several megabytes a search
+engine can do nothing with.
+
+Still outstanding: a crawler with JavaScript disabled sees 47 characters of text,
+which is the real fix for search visibility; icons and a web manifest for
+“add to home screen”; and the Google Fonts request, which is the only
+third-party call the site makes and ships every visitor's IP to Google.
+
 ### Layout
 
 ```

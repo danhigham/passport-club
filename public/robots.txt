@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# The map data and globe texture are several megabytes and contain nothing a
+# search engine can use. Crawling them wastes crawl budget on this site and
+# bandwidth on ours, for no benefit to anyone.
+Disallow: /data/
+Disallow: /textures/
+
+Sitemap: https://mypassport.club/sitemap.xml

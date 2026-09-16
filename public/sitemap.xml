@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One page, because that is genuinely all there is: the game has no
+  client-side routing, so every URL other than this one is a 404. No <lastmod>
+  either, rather than a hardcoded date that would quietly start lying the next
+  time anything ships.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://mypassport.club/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

@@ -5,8 +5,56 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#12233d" />
-    <meta name="description" content="mypassport.club — a friendly geography game. Find continents, countries, states and cities at your own level." />
-    <title>mypassport.club</title>
+
+    <!--
+      The title carries the words someone would actually search for. "Find
+      continents, countries and cities" is what the game is; the bare domain
+      name, which was all this said before, is not something anybody looks up.
+    -->
+    <title>mypassport.club — a friendly geography game for kids</title>
+    <meta
+      name="description"
+      content="Find continents, countries, states and cities on a spinnable globe. Choose your own difficulty, with borders and place names as training wheels. Free, no sign-up."
+    />
+
+    <!--
+      Both mypassport.club and the netlify.app subdomain serve this site, which
+      reads as duplicate content. The subdomain is 301'd to here (see
+      netlify.toml) and this states the preferred address outright.
+    -->
+    <link rel="canonical" href="https://mypassport.club/" />
+
+    <!--
+      Share previews. Worth more here than search ranking: social scrapers do
+      not run JavaScript, so without these a shared link is a bare URL with no
+      title, description or picture — and a link to a colourful globe game is
+      exactly the sort of thing that gets passed between parents.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="mypassport.club" />
+    <meta property="og:url" content="https://mypassport.club/" />
+    <meta property="og:title" content="mypassport.club — a friendly geography game for kids" />
+    <meta
+      property="og:description"
+      content="Find continents, countries, states and cities on a spinnable globe. Choose your own difficulty, with borders and place names as training wheels."
+    />
+    <meta property="og:image" content="https://mypassport.club/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A globe showing Africa and Europe, with the question 'Find Iran' beneath it."
+    />
+    <meta property="og:locale" content="en_GB" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="mypassport.club — a friendly geography game for kids" />
+    <meta
+      name="twitter:description"
+      content="Find continents, countries, states and cities on a spinnable globe. Choose your own difficulty."
+    />
+    <meta name="twitter:image" content="https://mypassport.club/og-image.jpg" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />

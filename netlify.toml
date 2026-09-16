@@ -6,6 +6,25 @@
   # The build scripts use modern Node APIs (top-level await, fetch, node: imports).
   NODE_VERSION = "24"
 
+# -------------------------------------------------------------- one address
+#
+# The site answers on both mypassport.club and mypassport-club.netlify.app,
+# which search engines read as the same content at two addresses; left alone,
+# they pick a canonical themselves and may well pick the wrong one.
+#
+# A 301 rather than a noindex, because a redirect passes any accumulated
+# ranking signal to the surviving address instead of throwing it away.
+#
+# Note this matches the bare subdomain only. Deploy previews are served from
+# <deploy-id>--mypassport-club.netlify.app, which does not match, so draft
+# deploys stay reachable for checking before going live.
+
+[[redirects]]
+  from = "https://mypassport-club.netlify.app/*"
+  to = "https://mypassport.club/:splat"
+  status = 301
+  force = true
+
 # ---------------------------------------------------------------- caching
 #
 # Two kinds of asset, two policies.
@@ -38,6 +57,22 @@
   for = "/index.html"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# Both are small, and both want to be re-read reasonably often.
+[[headers]]
+  for = "/robots.txt"
+  [headers.values]
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/sitemap.xml"
+  [headers.values]
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/og-image.jpg"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
 
 [[headers]]
   for = "/*"
